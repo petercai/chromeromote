@@ -35,13 +35,21 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
    - **Before scanning, open the address in a desktop browser** and make sure you see the
      "还没有配对" (not paired yet) page, not a GitHub 404. The extension popup checks this too: if the
      address doesn't load, it shows a red warning with the HTTP status code.
-2. **Install the extension on the Chromebook**
-   - On the Chromebook, download the repository ZIP:
-     `https://github.com/<user>/<repo>/archive/refs/heads/main.zip`
-   - In the *Files* app, double-click the ZIP and copy the folder out of it (for example to
-     *My files → chrome-remote*).
-   - Open `chrome://extensions`, turn on *Developer mode*, click *Load unpacked* and select the
-     `extension/` folder inside it.
+2. **Install the extension on the Chromebook (via Google Drive)**
+   - On the PC, run the VS Code task **"扩展:升级版本并打包"** (bump version and pack), or
+     `npm run pack`. This creates **`dist/chrome-remote-extension-v<version>.zip`** (for example `chrome-remote-extension-v1.0.10.zip`; older packages are removed), with `manifest.json` at the
+     root of the ZIP.
+   - Upload the ZIP to Google Drive.
+   - On the Chromebook, open the *Files* app → *Google Drive* and copy the ZIP to *My files*.
+     Double-click it, then copy the extracted folder out (for example to
+     *My files → chrome-remote-extension*).
+   - Open `chrome://extensions`, turn on *Developer mode*, click *Load unpacked* and select that
+     folder.
+   - Why not a packed `.crx`? Chrome and ChromeOS refuse to install `.crx` files that don't come from
+     the Chrome Web Store (unless the device is enterprise-managed). A ZIP plus *Load unpacked* is the
+     route that works.
+   - Alternative without Drive: download the repository ZIP
+     (`https://github.com/<user>/<repo>/archive/refs/heads/main.zip`) and load its `extension/` folder.
    - **Updating** (needed after every code change, or the Chromebook keeps running the old code):
      download the ZIP again, **replace** the old folder, then click ⟳ *Reload* on the extension in
      `chrome://extensions`.
@@ -112,6 +120,37 @@ phone you want to keep.
   lines. Every command carries a `cmd_id`, which you can match against the phone page's DevTools
   console.
 - **Rollback**: disable or remove the extension. Nothing else on the Chromebook is changed.
+
+## VS Code tasks
+
+Open *Terminal → Run Task…* (the default build task is `Ctrl+Shift+B`):
+
+| Task | What it does |
+|------|--------------|
+| 扩展:升级版本号 (bump version) | `npm run bump`: version +1 in `version.js`, `manifest.json` and the `?v=` cache-busting parameters |
+| 扩展:打包 (pack extension) | `npm run pack`: writes `dist/chrome-remote-extension-v<version>.zip` for Google Drive |
+| 扩展:升级版本并打包 (bump + pack) | Runs both in order (**default build task**) |
+
+## Library (片单), several Chromebooks, sync (1.0.13)
+
+- **片单 tab (Library):** the third tab at the bottom has two lists, **最近** (Recent) and **收藏** (Bookmarks).
+  - Tap a row to open it on the TV; playback **resumes 5 s before** where you stopped.
+  - Use 🗑 to delete a row (with a confirmation).
+- **Bookmark the current video:** tap ☆ next to the title on the 播放 (Play) tab. It turns into ★; tap again to
+  remove the bookmark.
+- **Sync:** Recent (10 entries) and Bookmarks (up to 100) are stored with `chrome.storage.sync`, so every
+  Chromebook signed in to the same Google account sees the same lists. Each entry shows which device it
+  was watched on.
+- **Several Chromebooks:**
+  - Pair each one by scanning its popup QR code. The phone keeps them all.
+  - The status bar always shows **which Chromebook you control**; tap the name to switch, delete a
+    pairing, or add a new device.
+  - Name each Chromebook in its extension popup ("这台 Chromebook 的名称", this Chromebook's name).
+- **Device offline:** if the selected Chromebook is turned off, the phone notices within about 15 s (heartbeat)
+  and shows "<name> 不在线" (offline). It keeps retrying and offers the other devices; it never switches by
+  itself, so you never control the wrong TV.
+- **Diagnostics:** in the phone page's DevTools console, `CRRemote.send('libraryList')` and
+  `CRRemote.devices()`.
 
 ## Version number: is GitHub serving my latest code?
 

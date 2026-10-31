@@ -56,7 +56,8 @@
     if (data && data.type === MSG.HELLO && data.key === config.key) {
       entry.authed = true;
       entry.clientId = String(data.client_id || conn.peer);
-      safeSend(conn, { type: MSG.WELCOME, v: PROTOCOL_VERSION });
+      // name + version let the phone show WHICH Chromebook it controls (multi-device switcher).
+      safeSend(conn, { type: MSG.WELCOME, v: PROTOCOL_VERSION, name: config.deviceName, version: globalThis.CR_VERSION });
       log.info('conn.authed', { client_id: entry.clientId, remote_peer: conn.peer });
       reportStatus('online');
       return;

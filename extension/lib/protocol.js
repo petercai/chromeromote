@@ -19,6 +19,12 @@
     RELOAD: 'reload',
     HOME: 'home',
     FULLSCREEN: 'fullscreen',
+    // Watch library (service worker, chrome.storage.local)
+    LIBRARY_LIST: 'libraryList',
+    BOOKMARK_ADD: 'bookmarkAdd',
+    BOOKMARK_REMOVE: 'bookmarkRemove',
+    RECENT_REMOVE: 'recentRemove',
+    OPEN_ENTRY: 'openEntry',
     // Page-level (content script, top frame only)
     MOVE: 'move',
     CLICK: 'click',
@@ -34,7 +40,10 @@
     PING: 'ping',
   });
 
-  const BROWSER_CMDS = Object.freeze([CMD.BACK, CMD.FORWARD, CMD.RELOAD, CMD.HOME, CMD.FULLSCREEN, CMD.PING]);
+  const BROWSER_CMDS = Object.freeze([
+    CMD.BACK, CMD.FORWARD, CMD.RELOAD, CMD.HOME, CMD.FULLSCREEN, CMD.PING,
+    CMD.LIBRARY_LIST, CMD.BOOKMARK_ADD, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE, CMD.OPEN_ENTRY,
+  ]);
   const PAGE_CMDS = Object.freeze([CMD.MOVE, CMD.CLICK, CMD.SCROLL, CMD.PAGE_UP, CMD.PAGE_DOWN]);
   const VIDEO_CMDS = Object.freeze([CMD.PLAY_PAUSE, CMD.SEEK_BY, CMD.SEEK_TO, CMD.VOLUME]);
   // High-frequency input that is fire-and-forget (no ack) to avoid flooding the channel.
@@ -51,6 +60,7 @@
     CLICK_IFRAME: 'CLICK_IFRAME',
     FULLSCREEN_FAILED: 'FULLSCREEN_FAILED',
     NO_HISTORY: 'NO_HISTORY', // back/forward had nothing to go to: we stayed on the current page
+    SYNC_FAILED: 'SYNC_FAILED', // chrome.storage.sync write refused (quota / offline sync service)
     AUTOPLAY_BLOCKED: 'AUTOPLAY_BLOCKED', // unmuted play() refused without a real gesture; played muted instead
     PEER_UNAVAILABLE: 'PEER_UNAVAILABLE',
     TIMEOUT: 'TIMEOUT',
@@ -108,6 +118,13 @@
     [CMD.SEEK_BY]: (a) => (isFiniteNumber(a.seconds) ? null : ERR.BAD_MESSAGE),
     [CMD.SEEK_TO]: (a) => (isFiniteNumber(a.time) && a.time >= 0 ? null : ERR.BAD_MESSAGE),
     [CMD.VOLUME]: (a) => (isFiniteNumber(a.level) && a.level >= 0 && a.level <= 1 ? null : ERR.BAD_MESSAGE),
+    [CMD.BOOKMARK_REMOVE]: (a) => (typeof a.key === 'string' && a.key.length > 0 ? null : ERR.BAD_MESSAGE),
+    [CMD.RECENT_REMOVE]: (a) => (typeof a.key === 'string' && a.key.length > 0 ? null : ERR.BAD_MESSAGE),
+    // Only http(s) pages may be opened from the phone; time (resume position) is optional.
+    [CMD.OPEN_ENTRY]: (a) =>
+      typeof a.url === 'string' && /^https?:\/\//i.test(a.url) && (a.time === undefined || (isFiniteNumber(a.time) && a.time >= 0))
+        ? null
+        : ERR.BAD_MESSAGE,
   });
 
   /** Validate an inbound command envelope. Returns {ok:true} or {ok:false, errorCode}. */

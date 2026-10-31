@@ -38,7 +38,12 @@
   </head>
   <body>
     <h1>Chrome 遥控 <span id="extVersion" title="扩展版本">—</span></h1>
-    <div class="status"><span id="dot" class="dot"></span><span id="statusText">读取中…</span></div>
+    <label for="deviceName">这台 Chromebook 的名称(手机上显示)</label>
+    <div class="row" style="margin-top: 4px">
+      <input id="deviceName" maxlength="40" style="flex: 2" />
+      <button id="saveName" class="primary">保存</button>
+    </div>
+    <div class="status" style="margin-top: 12px"><span id="dot" class="dot"></span><span id="statusText">读取中…</span></div>
     <div id="qr"></div>
     <ol>
       <li>打开手机<b>相机</b>(或 Google Lens),对准上面的二维码。</li>
@@ -46,6 +51,7 @@
       <li>手机显示"已连接"后,在 Chrome 菜单里选"添加到主屏幕"。只需配对一次。</li>
     </ol>
     <p id="baseWarn" class="hint warn" hidden>请先在下面填写遥控网页地址(GitHub Pages)并保存,二维码才会出现。</p>
+    <p id="syncInfo" class="hint"></p>
     <p id="versions" class="hint"></p>
     <div id="remoteWarn" class="hint warn" hidden>
       <span id="remoteWarnText"></span>

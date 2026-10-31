@@ -12,7 +12,7 @@
  * Message routing convention: every runtime message carries `target` ('bg' | 'offscreen')
  * or comes from a content script with `type` 'videoState'.
  */
-importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js');
+importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js', 'lib/library.js');
 
 const { CMD, ERR, ok, fail, executorOf, buildPairUrl, newKey, DEFAULT_HOME_URL } = CR;
 
@@ -52,7 +52,11 @@ const log = CRLog.createLogger('ext-sw', logSink);
 // ---------------------------------------------------------------------------
 // Config (source of truth: chrome.storage.local)
 // ---------------------------------------------------------------------------
-const CONFIG_KEYS = Object.freeze(['peerId', 'peerToken', 'key', 'remoteBaseUrl']);
+const CONFIG_KEYS = Object.freeze(['peerId', 'peerToken', 'key', 'remoteBaseUrl', 'deviceName']);
+
+// Shown on the phone to tell Chromebooks apart; editable in the popup.
+const defaultDeviceName = (peerId) => `Chromebook-${String(peerId).replace(/-/g, '').slice(-4).toUpperCase()}`;
+const DEVICE_NAME_MAX = 40;
 
 /** Unset or legacy-placeholder address -> the default; a user-entered address is kept as is. */
 const migrateBaseUrl = (stored) => {
@@ -73,6 +77,7 @@ const loadConfig = async () => {
     key: stored.key || newKey(),
     remoteBaseUrl: migrateBaseUrl(stored.remoteBaseUrl),
   };
+  config.deviceName = stored.deviceName || defaultDeviceName(config.peerId);
   const missing = CONFIG_KEYS.filter((k) => config[k] !== stored[k]);
   if (missing.length > 0) {
     await chrome.storage.local.set(config);
@@ -213,9 +218,126 @@ const toggleFullscreen = async (tab) => {
 };
 
 // ---------------------------------------------------------------------------
+// Watch library: recent (last 10) + bookmarks, synced across the user's Chromebooks via
+// chrome.storage.sync (the source of truth; layout in lib/library.js). List logic is pure.
+// Resume = open the page, then seek ONCE to resumePosition() as soon as the video reports a
+// duration (pending seek per tab in storage.session, survives a worker restart during load).
+// ---------------------------------------------------------------------------
+const RECENT_WRITE_INTERVAL_MS = 10000;
+const lastVideoByTab = new Map(); // tabId -> latest video state (for bookmarking "where I am")
+const lastRecentWrite = new Map(); // entry key -> ts of last write (throttle, sync write quota)
+
+const syncStore = chrome.storage.sync;
+
+/** Write to sync storage; quota / sync-service errors become a logged SYNC_FAILED result. */
+const syncWrite = async (op, payload, context) => {
+  try {
+    await (op === 'remove' ? syncStore.remove(payload) : syncStore.set(payload));
+    await chrome.storage.local.set({ libraryLastWrite: Date.now() });
+    return ok();
+  } catch (e) {
+    log.error('library.sync_write_failed', { ...context, op, error: String(e && e.message) });
+    return fail(ERR.SYNC_FAILED, { message: String(e && e.message) });
+  }
+};
+
+const readLibrary = async () => {
+  const all = await syncStore.get(null);
+  return { recent: all.recent || [], bookmarks: CRLib.bookmarksFromStore(all) };
+};
+
+// One-time move of pre-1.0.11 local data (recent array + bookmarks array) into sync storage.
+const migrateLibraryToSync = async () => {
+  const { recent, bookmarks, libraryMigrated } = await chrome.storage.local.get(['recent', 'bookmarks', 'libraryMigrated']);
+  if (libraryMigrated) return;
+  const payload = {};
+  if (Array.isArray(recent) && recent.length) payload.recent = recent.slice(0, CRLib.RECENT_MAX);
+  (Array.isArray(bookmarks) ? bookmarks : []).slice(0, CRLib.BOOKMARK_MAX).forEach((b) => {
+    if (b && b.key) payload[CRLib.bookmarkStorageKey(b.key)] = b;
+  });
+  if (Object.keys(payload).length) await syncWrite('set', payload, { reason: 'migrate' });
+  await chrome.storage.local.set({ libraryMigrated: true });
+  await chrome.storage.local.remove(['recent', 'bookmarks']);
+  log.info('library.migrated', { recent: (payload.recent || []).length, bookmarks: Object.keys(payload).filter(CRLib.isBookmarkStorageKey).length });
+};
+
+const recordRecent = async (tab, state) => {
+  if (!CRLib.shouldRecord(state)) return;
+  const { deviceName } = await loadConfig();
+  const entry = CRLib.makeEntry({ url: tab.url, title: tab.title, time: state.t, duration: state.dur, device: deviceName });
+  if (!entry) return;
+  const now = Date.now();
+  if (now - (lastRecentWrite.get(entry.key) || 0) < RECENT_WRITE_INTERVAL_MS) return;
+  lastRecentWrite.set(entry.key, now);
+  const { recent } = await readLibrary();
+  const res = await syncWrite('set', { recent: CRLib.upsertRecent(recent, entry) }, { key: entry.key });
+  if (res.ok) log.debug('library.recent_saved', { key: entry.key, time: entry.time });
+};
+
+const pendingSeekKey = (tabId) => `pendingSeek:${tabId}`;
+
+// Called on every video state of the target tab: apply a pending resume seek exactly once.
+const applyPendingSeek = async (tab, state) => {
+  const k = pendingSeekKey(tab.id);
+  const { [k]: pending } = await chrome.storage.session.get(k);
+  if (!pending || !state.hasVideo || !state.dur) return;
+  if (CRLib.entryKey(tab.url) !== pending.key) return; // still on another page (redirect, ads)
+  await chrome.storage.session.remove(k);
+  const time = CRLib.resumePosition(pending.time, state.dur);
+  const res = await runVideo(tab, CR.makeCmd({ cmd: CMD.SEEK_TO, args: { time } })).catch((e) => fail(ERR.INTERNAL, { message: String(e) }));
+  log.info('library.resume_seek', { tab_id: tab.id, key: pending.key, saved: pending.time, time, ok: res.ok, error_code: res.errorCode });
+};
+
+const LIBRARY_ACTIONS = Object.freeze({
+  [CMD.LIBRARY_LIST]: async () => ok(await readLibrary()),
+  [CMD.BOOKMARK_ADD]: async (tab) => {
+    const state = lastVideoByTab.get(tab.id);
+    const { deviceName } = await loadConfig();
+    const entry = CRLib.makeEntry({
+      url: tab.url,
+      title: tab.title,
+      time: state && state.hasVideo ? state.t : 0,
+      duration: state && state.dur,
+      device: deviceName,
+    });
+    if (!entry) return fail(ERR.NO_TARGET);
+    const { bookmarks } = await readLibrary();
+    const isNew = !bookmarks.some((b) => b.key === entry.key);
+    if (isNew && bookmarks.length >= CRLib.BOOKMARK_MAX) {
+      // Evict the oldest bookmark to stay within the cap (and the sync item quota).
+      await syncWrite('remove', CRLib.bookmarkStorageKey(bookmarks[bookmarks.length - 1].key), { reason: 'evict' });
+    }
+    const res = await syncWrite('set', { [CRLib.bookmarkStorageKey(entry.key)]: entry }, { key: entry.key });
+    if (!res.ok) return res;
+    log.info('library.bookmark_added', { key: entry.key, time: entry.time });
+    return ok({ entry });
+  },
+  [CMD.BOOKMARK_REMOVE]: async (tab, args) => {
+    const res = await syncWrite('remove', CRLib.bookmarkStorageKey(args.key), { key: args.key });
+    if (res.ok) log.info('library.bookmark_removed', { key: args.key });
+    return res;
+  },
+  [CMD.RECENT_REMOVE]: async (tab, args) => {
+    const { recent } = await readLibrary();
+    const res = await syncWrite('set', { recent: CRLib.removeRecent(recent, args.key) }, { key: args.key });
+    if (res.ok) log.info('library.recent_removed', { key: args.key });
+    return res;
+  },
+  [CMD.OPEN_ENTRY]: async (tab, args) => {
+    const key = CRLib.entryKey(args.url);
+    if (!key) return fail(ERR.BAD_MESSAGE);
+    if (args.time > 0) await chrome.storage.session.set({ [pendingSeekKey(tab.id)]: { key, time: args.time } });
+    await chrome.tabs.update(tab.id, { url: args.url });
+    log.info('library.open', { tab_id: tab.id, key, time: args.time || 0 });
+    return ok();
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Executors (each returns {ok, errorCode, data}; never throws)
 // ---------------------------------------------------------------------------
 const BROWSER_ACTIONS = Object.freeze({
+  ...LIBRARY_ACTIONS,
   [CMD.BACK]: (tab) => historyNavigate(tab, -1),
   [CMD.FORWARD]: (tab) => historyNavigate(tab, 1),
   [CMD.RELOAD]: (tab) => chrome.tabs.reload(tab.id).then(() => ok()),
@@ -273,6 +395,10 @@ const forwardVideoState = async (state, sender) => {
   const tab = await getTargetTab();
   if (!tab || !sender.tab || sender.tab.id !== tab.id) return;
   sendToOffscreen({ type: 'state', state: { ...state, title: tab.title || '', url: tab.url || '', ts: Date.now() } });
+  // Library side effects never block or break state forwarding.
+  lastVideoByTab.set(tab.id, state);
+  recordRecent(tab, state).catch((e) => log.warn('library.recent_failed', { error: String(e) }));
+  applyPendingSeek(tab, state).catch((e) => log.warn('library.resume_failed', { error: String(e) }));
 };
 
 // Reset the phone's view when the user switches tab or navigates.
@@ -365,6 +491,12 @@ const fetchRemoteVersion = async (baseUrl) => {
 // ---------------------------------------------------------------------------
 const isPlaceholderUrl = (url) => url.includes(LEGACY_PLACEHOLDER_MARK);
 
+const librarySummary = async () => {
+  const { recent, bookmarks } = await readLibrary();
+  const { libraryLastWrite = null } = await chrome.storage.local.get('libraryLastWrite');
+  return { recent: recent.length, bookmarks: bookmarks.length, lastWrite: libraryLastWrite };
+};
+
 const getPopupStatus = async ({ nonce = '' } = {}) => {
   const config = await loadConfig();
   const { status = null, logs = [] } = await chrome.storage.session.get(['status', 'logs']);
@@ -375,6 +507,8 @@ const getPopupStatus = async ({ nonce = '' } = {}) => {
     remoteBaseUrl: config.remoteBaseUrl,
     remoteCheck,
     version: CR_VERSION,
+    deviceName: config.deviceName,
+    library: await librarySummary(),
     pairUrl: buildPairUrl({ baseUrl: config.remoteBaseUrl, peerId: config.peerId, key: config.key, nonce }),
     logCount: logs.length,
   };
@@ -382,8 +516,8 @@ const getPopupStatus = async ({ nonce = '' } = {}) => {
 
 const BG_HANDLERS = Object.freeze({
   getConfig: async () => {
-    const { peerId, peerToken, key } = await loadConfig();
-    return { peerId, peerToken, key };
+    const { peerId, peerToken, key, deviceName } = await loadConfig();
+    return { peerId, peerToken, key, deviceName };
   },
   cmd: ({ msg, clientId }) => executeCommand(msg, clientId),
   status: ({ status }) => applyStatus(status).then(() => true),
@@ -407,6 +541,14 @@ const BG_HANDLERS = Object.freeze({
     // Check immediately so the popup can warn right after saving.
     const check = await checkRemoteUrl(normalized, { force: true });
     return { ok: true, check };
+  },
+  setDeviceName: async ({ deviceName }) => {
+    const name = String(deviceName || '').trim().slice(0, DEVICE_NAME_MAX);
+    if (!name) return { ok: false, error: '名称不能为空' };
+    await updateConfig({ deviceName: name });
+    log.info('config.device_name_changed', { device_name: name });
+    await sendToOffscreen({ type: 'reloadConfig' }); // phones re-authenticate and receive the new name
+    return { ok: true };
   },
   regenerateKey: async () => {
     await updateConfig({ key: newKey() });
@@ -442,10 +584,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.runtime.onStartup.addListener(() => {
   log.info('lifecycle.startup');
   ensureOffscreen();
+  migrateLibraryToSync().catch((e) => log.error('library.migrate_failed', { error: String(e) }));
 });
 chrome.runtime.onInstalled.addListener((details) => {
   log.info('lifecycle.installed', { reason: details.reason });
   loadConfig().then(ensureOffscreen);
+  migrateLibraryToSync().catch((e) => log.error('library.migrate_failed', { error: String(e) }));
 });
 chrome.tabs.onActivated.addListener(() => announceNoVideo());
 chrome.tabs.onUpdated.addListener((tabId, info) => {

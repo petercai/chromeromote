@@ -107,3 +107,64 @@ input[type="range"]:disabled { opacity: 0.35; }
   position: fixed; top: 40px; left: var(--gap); right: var(--gap); z-index: 30;
   background: var(--danger); color: #fff; border-radius: var(--radius); padding: 10px 14px; font-size: 14px;
 }
+
+/* ---- 1.0.11: device chip, library tab, switcher, offline, confirm sheet (design 3.9, option A) ---- */
+.statusbar { height: 48px; }
+.device-chip {
+  min-width: 0; min-height: 36px; height: 36px; padding: 0 10px; flex-direction: row; gap: 6px;
+  border: 1px solid var(--border); border-radius: 18px; font-size: 14px; font-weight: 600; max-width: 55%;
+}
+.device-chip[aria-expanded="true"] { border-color: var(--accent); background: #2a1f14; }
+.device-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-text { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.small { font-size: 12px; }
+
+.title-row { display: flex; align-items: center; gap: 8px; }
+.title-row .title { flex: 1; min-width: 0; margin: 0; }
+.bookmark-btn { flex: none; font-size: 26px; color: var(--text-dim); border: 1px solid var(--border); border-radius: 14px; }
+.bookmark-btn.on { color: var(--accent); border-color: var(--accent); background: #2a1f14; }
+
+.segment { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; background: var(--surface); border-radius: var(--radius); }
+.segment button { min-height: 44px; font-size: 16px; color: #bdbdbd; background: transparent; border-radius: 9px; }
+.segment button.active { background: var(--accent); color: #000; font-weight: 600; }
+.lib-hint { margin: 0; font-size: 12px; }
+.lib-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; min-height: 0; }
+.lib-row { display: flex; align-items: center; background: var(--surface); border-radius: var(--radius); }
+.lib-open { flex: 1; min-width: 0; min-height: 72px; background: transparent; border-radius: var(--radius); align-items: stretch; text-align: left; padding: 12px 6px 10px 14px; gap: 4px; font-size: 16px; }
+.lib-open .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-open .s { font-size: 13px; color: var(--text-dim); }
+.lib-open .bar { display: block; height: 3px; background: var(--border); margin-top: 6px; }
+.lib-open .bar > span { display: block; height: 3px; background: var(--accent); }
+.lib-del { flex: none; min-width: 48px; width: 48px; background: transparent; color: var(--text-dim); font-size: 18px; }
+.lib-empty { text-align: center; margin-top: 40px; }
+
+.switcher { position: fixed; left: 0; right: 0; top: 48px; bottom: 0; z-index: 15; background: rgba(0, 0, 0, 0.6); }
+.switcher[hidden], .offline[hidden], .sheet-backdrop[hidden] { display: none; }
+.switcher-panel { background: var(--surface); border-radius: 0 0 16px 16px; padding: 14px 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.switcher-panel h2 { margin: 0 4px; font-size: 16px; }
+.device-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.device-row { display: flex; align-items: center; background: #262626; border-radius: var(--radius); }
+.device-row.current { background: #2a1f14; border: 1px solid var(--accent); }
+.device-pick { flex: 1; min-width: 0; min-height: 64px; background: transparent; align-items: flex-start; text-align: left; padding: 10px 14px; gap: 3px; font-size: 16px; }
+.device-pick .n { font-weight: 600; }
+.device-pick .s { font-size: 12px; color: #bdbdbd; }
+.device-pick .on { color: #3fb950; }
+.add-device { min-height: 56px; border: 1px dashed #4a4a4a; background: transparent; color: var(--accent); font-size: 15px; font-weight: 600; }
+
+.offline { position: absolute; inset: 0; z-index: 5; background: var(--bg); padding: 24px; display: flex; flex-direction: column; justify-content: center; gap: 12px; text-align: center; }
+.offline .device-list { text-align: left; }
+
+.sheet-backdrop { position: fixed; inset: 0; z-index: 25; background: rgba(0, 0, 0, 0.6); display: flex; flex-direction: column; justify-content: flex-end; }
+.sheet { background: var(--surface); border-radius: 16px 16px 0 0; padding: 20px 16px 24px; display: flex; flex-direction: column; gap: 12px; }
+.sheet h2 { margin: 0; font-size: 18px; }
+.sheet p { margin: 0; font-size: 14px; line-height: 1.5; }
+.sheet-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.sheet-actions button { min-height: 52px; font-size: 16px; }
+button.danger { background: var(--danger); color: #fff; font-weight: 600; }
+.toast.ok { background: var(--ok); }
+.tabbar { grid-template-columns: repeat(3, 1fr); }
+/* Status bar room for the device name (mockup): status text only when NOT connected, no site name. */
+.statusbar .site { display: none; }
+#latency { white-space: nowrap; font-size: 12px; margin-left: auto; }
+.status-text[hidden] { display: none; }
+.device-chip { max-width: 62%; }

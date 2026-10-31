@@ -98,11 +98,20 @@
     nonce = newNonce();
   }, NONCE_ROTATE_MS);
 
+  // Library sync summary (chrome.storage.sync is shared by all Chromebooks on this Google account).
+  const syncText = (lib) => {
+    if (!lib) return '';
+    const when = lib.lastWrite ? new Date(lib.lastWrite).toLocaleString() : '尚无';
+    return `片单(Google 账号同步):最近 ${lib.recent} 条 · 收藏 ${lib.bookmarks} 条 · 本机上次写入 ${when}`;
+  };
+
   let lastQrKey = '';
 
   const render = async () => {
     const info = await bg('getStatus', { nonce });
     $('extVersion').textContent = `v${info.version}`;
+    if (document.activeElement !== $('deviceName')) $('deviceName').value = info.deviceName || '';
+    $('syncInfo').textContent = syncText(info.library);
     const key = statusKey(info.status);
     $('dot').className = `dot ${key}`;
     $('statusText').textContent = STATUS_TEXT[key](info.status || {});
@@ -159,6 +168,12 @@
     a.click();
   };
 
+  $('saveName').addEventListener('click', async () => {
+    const res = await bg('setDeviceName', { deviceName: $('deviceName').value });
+    if (!res.ok) alert(res.error);
+    $('deviceName').blur();
+    render();
+  });
   $('saveUrl').addEventListener('click', async () => {
     const res = await bg('setBaseUrl', { remoteBaseUrl: $('baseUrl').value });
     if (!res.ok) alert(res.error);
