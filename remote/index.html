@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+  Phone remote PWA (layout B: bottom tab bar Browse | Play).
+  Shares the wire protocol with the extension by loading ../extension/lib/*.js directly,
+  so GitHub Pages must publish the repository root (see README.md).
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#121212" />
+    <title>Chrome 遥控</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Top status bar -->
+    <header class="statusbar">
+      <span id="dot" class="dot"></span>
+      <span id="statusText">未连接</span>
+      <span id="latency" class="dim"></span>
+      <span id="site" class="dim site"></span>
+    </header>
+
+    <main>
+      <!-- Browse tab: touchpad + browser buttons -->
+      <section id="tab-browse" class="tab active" aria-label="浏览">
+        <div id="touchpad" class="touchpad" aria-label="触控板">
+          <span class="touchpad-hint">单指滑动移动指针 · 轻点 = 点击 · 双指上下滑动 = 滚动</span>
+        </div>
+        <div class="btnrow">
+          <button data-cmd="back" aria-label="返回">↩<small>返回</small></button>
+          <button data-cmd="reload" aria-label="刷新">⟳<small>刷新</small></button>
+          <button data-cmd="home" aria-label="首页">⌂<small>首页</small></button>
+          <button data-cmd="pageUp" aria-label="上翻页">▲<small>上翻</small></button>
+          <button data-cmd="pageDown" aria-label="下翻页">▼<small>下翻</small></button>
+        </div>
+      </section>
+
+      <!-- Play tab: VLC-style transport -->
+      <section id="tab-play" class="tab" aria-label="播放">
+        <h2 id="title" class="title">没有正在播放的视频</h2>
+        <div class="seek">
+          <input id="seek" type="range" min="0" max="1000" value="0" disabled aria-label="进度" />
+          <div class="times"><span id="cur">--:--</span><span id="dur">--:--</span></div>
+        </div>
+        <div class="transport">
+          <button data-cmd="seekBy" data-seconds="-10" class="needs-video" aria-label="后退10秒">−10</button>
+          <button id="playPause" data-cmd="playPause" class="needs-video primary" aria-label="播放或暂停">▶</button>
+          <button data-cmd="seekBy" data-seconds="10" class="needs-video" aria-label="前进10秒">+10</button>
+          <button data-cmd="seekBy" data-seconds="30" class="needs-video" aria-label="前进30秒">+30</button>
+        </div>
+        <div class="volume">
+          <span aria-hidden="true">🔈</span>
+          <input id="volume" type="range" min="0" max="100" value="100" disabled aria-label="音量" />
+          <span id="volText" class="dim">--</span>
+        </div>
+        <button id="fullscreen" data-cmd="fullscreen" class="wide" aria-label="全屏">⛶ 全屏</button>
+      </section>
+    </main>
+
+    <!-- Bottom tab bar -->
+    <nav class="tabbar">
+      <button data-tab="browse" class="active">浏览</button>
+      <button data-tab="play">播放</button>
+    </nav>
+
+    <!-- Not-paired overlay -->
+    <div id="unpaired" class="overlay" hidden>
+      <div>
+        <h2>请扫描电视上的二维码</h2>
+        <p class="dim">在 Chromebook 上点击扩展图标"Chrome 遥控",用手机扫码完成配对。只需配对一次。</p>
+      </div>
+    </div>
+
+    <!-- Error toast -->
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="../extension/vendor/peerjs.min.js"></script>
+    <script src="../extension/lib/protocol.js"></script>
+    <script src="../extension/lib/log.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

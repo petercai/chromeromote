@@ -1,0 +1,58 @@
+<!doctype html>
+<!-- Extension popup: connection status, pairing QR code, remote URL setting, logs. -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chrome Remote</title>
+    <style>
+      :root {
+        --bg: #121212; --surface: #1e1e1e; --accent: #ff7a00;
+        --text: #ededed; --text-dim: #9e9e9e; --danger: #e5484d; --ok: #2e7d32;
+      }
+      body { margin: 0; width: 340px; padding: 16px; background: var(--bg); color: var(--text);
+             font: 14px/1.4 system-ui, sans-serif; }
+      h1 { font-size: 16px; margin: 0 0 12px; }
+      .status { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); }
+      .dot.online { background: var(--accent); } .dot.connected { background: var(--ok); }
+      .dot.error { background: var(--danger); }
+      #qr { background: #fff; padding: 12px; border-radius: 12px; display: flex; justify-content: center; }
+      #qr img { width: 260px; height: 260px; image-rendering: pixelated; }
+      .hint { color: var(--text-dim); font-size: 12px; margin: 8px 0; word-break: break-all; }
+      .warn { color: var(--danger); }
+      label { display: block; margin-top: 12px; color: var(--text-dim); font-size: 12px; }
+      input { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #2a2a2a;
+              background: var(--surface); color: var(--text); }
+      .row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+      button { flex: 1; padding: 8px; border: 0; border-radius: 8px; background: var(--surface); color: var(--text);
+               cursor: pointer; }
+      button.primary { background: var(--accent); color: #000; }
+      pre { max-height: 160px; overflow: auto; background: var(--surface); padding: 8px; border-radius: 8px;
+            font-size: 11px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>Chrome 遥控</h1>
+    <div class="status"><span id="dot" class="dot"></span><span id="statusText">读取中…</span></div>
+    <div id="qr"></div>
+    <p class="hint">用手机扫描二维码打开遥控网页(只需配对一次)。</p>
+    <p id="baseWarn" class="hint warn" hidden>请先设置遥控网页地址(GitHub Pages)。</p>
+
+    <label for="baseUrl">遥控网页地址</label>
+    <input id="baseUrl" placeholder="https://<用户名>.github.io/chrome-remote/remote/" />
+    <div class="row">
+      <button id="saveUrl" class="primary">保存地址</button>
+      <button id="regen">重新生成密钥</button>
+    </div>
+
+    <div class="row">
+      <button id="showLogs">查看日志</button>
+      <button id="exportLogs">导出日志</button>
+      <button id="clearLogs">清空日志</button>
+    </div>
+    <pre id="logs" hidden></pre>
+
+    <script src="vendor/qrcode.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

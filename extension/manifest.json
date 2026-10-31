@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Chrome Remote (Media)",
+  "description": "Control Chrome video playback and browsing from your Android phone over WebRTC.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "permissions": ["tabs", "offscreen", "storage", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Chrome Remote",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["lib/protocol.js", "lib/log.js", "content.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
+}

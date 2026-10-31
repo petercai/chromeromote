@@ -1,0 +1,107 @@
+/* Phone remote — dark theme, layout B. All colors via CSS variables (design 3.5.1). */
+:root {
+  --bg: #121212;
+  --surface: #1e1e1e;
+  --border: #2a2a2a;
+  --accent: #ff7a00;
+  --text: #ededed;
+  --text-dim: #9e9e9e;
+  --danger: #e5484d;
+  --ok: #2e7d32;
+  --radius: 12px;
+  --gap: 12px;
+  --btn: 56px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.4 system-ui, -apple-system, "Noto Sans SC", sans-serif;
+  user-select: none;
+  overscroll-behavior: none;
+}
+
+body { display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom); }
+
+.dim { color: var(--text-dim); }
+
+/* Status bar (32px) */
+.statusbar {
+  height: 32px; flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 0 var(--gap); font-size: 13px; border-bottom: 1px solid var(--border);
+}
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); flex: none; }
+.dot.connected { background: var(--ok); }
+.dot.error { background: var(--danger); }
+.site { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+
+main { flex: 1; min-height: 0; position: relative; }
+.tab { position: absolute; inset: 0; display: none; flex-direction: column; gap: var(--gap); padding: var(--gap); }
+.tab.active { display: flex; }
+
+/* Buttons: min 56x56 touch target, 100ms pressed feedback */
+button {
+  min-width: var(--btn); min-height: var(--btn);
+  border: 0; border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+  font-size: 22px; font-family: inherit;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  transition: transform 100ms, background 100ms;
+}
+button:active { transform: scale(0.94); background: #2c2c2c; }
+button:disabled { opacity: 0.35; }
+button small { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+button.primary { background: var(--accent); color: #000; min-width: 72px; min-height: 72px; font-size: 30px; border-radius: 50%; }
+button.wide { width: 100%; font-size: 18px; flex-direction: row; gap: 8px; }
+
+/* Browse tab */
+.touchpad {
+  flex: 1; border: 1px solid var(--border); border-radius: 16px; background: #181818;
+  display: flex; align-items: center; justify-content: center; touch-action: none;
+}
+.touchpad.active { border-color: var(--accent); }
+.touchpad-hint { color: var(--text-dim); font-size: 13px; text-align: center; padding: 0 24px; pointer-events: none; }
+.btnrow { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--gap); }
+
+/* Play tab */
+.title {
+  font-size: 18px; font-weight: 600; margin: 8px 0 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.seek, .volume { width: 100%; }
+.times { display: flex; justify-content: space-between; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.transport { display: flex; justify-content: space-around; align-items: center; margin: auto 0; }
+.volume { display: flex; align-items: center; gap: var(--gap); }
+.volume input { flex: 1; }
+#volText { width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Slider: 6px track, 28px thumb, 48px touch area */
+input[type="range"] {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 48px; background: transparent; margin: 0;
+}
+input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--border); }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 28px; height: 28px; margin-top: -11px; border-radius: 50%; background: var(--accent);
+}
+input[type="range"]:disabled { opacity: 0.35; }
+
+/* Tab bar (56px) */
+.tabbar { flex: none; height: 56px; display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--border); }
+.tabbar button { border-radius: 0; background: transparent; font-size: 16px; color: var(--text-dim); min-height: 56px; }
+.tabbar button.active { color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
+
+/* Overlay + toast (highest z-order) */
+.overlay {
+  position: fixed; inset: 0; z-index: 20; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; text-align: center; padding: 32px;
+}
+.overlay[hidden], .toast[hidden] { display: none; }
+.toast {
+  position: fixed; top: 40px; left: var(--gap); right: var(--gap); z-index: 30;
+  background: var(--danger); color: #fff; border-radius: var(--radius); padding: 10px 14px; font-size: 14px;
+}
