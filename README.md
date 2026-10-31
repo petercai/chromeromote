@@ -100,8 +100,14 @@ phone you want to keep.
 
 ## Daily use
 
-1. Turn on the TV, unlock the Chromebook and open Chrome. This part is done by hand.
-2. On the phone, open "Chrome 遥控" from the home screen.
+1. Turn on the TV and log in to the Chromebook. You **don't need to open a Chrome window**: the
+   extension starts by itself at every login and runs in the background, so it is ready to connect
+   (it retries as soon as Wi-Fi comes up). The toolbar badge shows the state: `ON` means a phone is
+   connected and `!` means an error. Keep *Developer mode* on in `chrome://extensions`, because
+   ChromeOS disables unpacked extensions when it is turned off. There is no separate "app" to
+   install: Chrome Apps are no longer supported on ChromeOS, and a web app can't control Chrome tabs.
+2. On the phone, open "Chrome 遥控" from the home screen. If no Chrome window is open, tap 首页
+   (Home) to open one (1.0.17).
 3. **Browse** tab: slide one finger to move the pointer, tap to click, and slide two fingers to
    scroll. The buttons are Back, Reload, Home (site.com), Page up and Page down.
 4. When a video starts, the phone switches to the **Play** tab by itself. It has play/pause, −10 / +10

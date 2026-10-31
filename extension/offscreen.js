@@ -159,7 +159,8 @@
     peer.on('open', (id) => {
       retryMs = RETRY_MIN_MS;
       lastError = null;
-      log.info('peer.open', { peer_id: id });
+      // since_start_ms: offscreen load -> connectable (at ChromeOS login this includes waiting for Wi-Fi).
+      log.info('peer.open', { peer_id: id, since_start_ms: Math.round(performance.now()) });
       reportStatus('online');
     });
     peer.on('connection', onConnection);
@@ -176,6 +177,31 @@
       reportStatus('error');
     });
   };
+
+  // -------------------------------------------------------------------------
+  // Network changes. At ChromeOS login this document usually starts before Wi-Fi is up: the first
+  // registration fails and the backoff could idle up to RETRY_MAX_MS. Reconnect the moment it returns.
+  // -------------------------------------------------------------------------
+  const peerState = () => {
+    if (!peer) return 'none';
+    if (peer.destroyed) return 'destroyed';
+    if (peer.disconnected) return 'disconnected';
+    return peer.open ? 'open' : 'opening';
+  };
+
+  const onNetworkOnline = () => {
+    const state = peerState();
+    log.info('net.online', { peer_state: state, pending_retry: Boolean(retryTimer) });
+    if (!config || state === 'open' || state === 'opening') return; // not started yet / already fine
+    clearTimeout(retryTimer);
+    retryTimer = null;
+    retryMs = RETRY_MIN_MS;
+    if (state === 'disconnected') peer.reconnect();
+    else createPeer();
+  };
+
+  window.addEventListener('online', onNetworkOnline);
+  window.addEventListener('offline', () => log.warn('net.offline', { peer_state: peerState(), clients: clients.size }));
 
   const loadRemoteConfig = async () => {
     const next = await toBg({ type: 'getConfig' });
