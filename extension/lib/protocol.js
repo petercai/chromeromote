@@ -170,6 +170,17 @@
     return { peerId, key };
   };
 
+  /** Compare dotted numeric versions: -1 if a<b, 0 if equal, 1 if a>b. Missing parts count as 0. */
+  const compareVersions = (a, b) => {
+    const pa = String(a || '0').split('.').map(Number);
+    const pb = String(b || '0').split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+      const diff = (pa[i] || 0) - (pb[i] || 0);
+      if (diff !== 0) return diff > 0 ? 1 : -1;
+    }
+    return 0;
+  };
+
   /** Format seconds as h:mm:ss / m:ss for the phone UI. */
   const formatTime = (sec) => {
     if (!isFiniteNumber(sec) || sec < 0) return '--:--';
@@ -200,5 +211,6 @@
     extractPairing,
     parsePairHash,
     formatTime,
+    compareVersions,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

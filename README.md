@@ -36,8 +36,18 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
      "还没有配对" (not paired yet) page, not a GitHub 404. The extension popup checks this too: if the
      address doesn't load, it shows a red warning with the HTTP status code.
 2. **Install the extension on the Chromebook**
-   - Open `chrome://extensions` and turn on *Developer mode*.
-   - Click *Load unpacked* and select the `extension/` folder.
+   - On the Chromebook, download the repository ZIP:
+     `https://github.com/<user>/<repo>/archive/refs/heads/main.zip`
+   - In the *Files* app, double-click the ZIP and copy the folder out of it (for example to
+     *My files → chrome-remote*).
+   - Open `chrome://extensions`, turn on *Developer mode*, click *Load unpacked* and select the
+     `extension/` folder inside it.
+   - **Updating** (needed after every code change, or the Chromebook keeps running the old code):
+     download the ZIP again, **replace** the old folder, then click ⟳ *Reload* on the extension in
+     `chrome://extensions`.
+   - **How to tell which version is running:** the top of the extension popup shows the version in
+     large type (for example `v1.0.6`). **No version number there means a very old extension that must
+     be updated**; it generates fixed, outdated QR codes.
 3. **Set the page address**
    - Click the extension icon "Chrome 遥控".
    - Enter the GitHub Pages address from step 1 and click *保存地址* (Save address).
@@ -86,6 +96,7 @@ phone you want to keep.
 | Phone shows "电视端不在线" (TV is offline) | Is Chrome running? Is the extension badge `!`? Open the popup and check the status and the logs |
 | Phone shows "配对失效" (pairing invalid) | The key was regenerated. Scan the QR code again |
 | Phone shows a GitHub **404** after scanning / the popup shows a red "地址打不开" (address won't load) warning | GitHub Pages isn't published at that address yet. ① Is the code pushed? ② Under *Settings → Pages*, is the source `main` / `/ (root)`? ③ Are the user and repository names in the address spelled correctly? (The address is case-sensitive, and `chrome-remote` and `chromeromote` are different.) ④ After a push, wait a few minutes, then click *重新检查* (Check again) in the popup |
+| Phone shows **GitHub's own** 404 page ("There isn't a GitHub Pages site here") | The address in the QR code points **outside** this site, because our site answers any missing page with its own Chinese 404 page. ① Look at the top of the popup: no version number means the Chromebook runs an old extension; update it (setup step 2). ② Check that the page address saved in the popup matches the repository name exactly, including capitalisation (`ChromeRomote` ≠ `chromeromote`). From 1.0.6 the popup shows no QR code for a bad address and offers "改用 …" (use this address instead). ③ Close the old 404 tab on the phone and scan the new QR code |
 | `…/remote/` works, but the `#peer=…` link from the QR code shows 404 | ① **Close the old Chrome tab on the phone.** Lens and the Google app always open links in the same tab, and that tab may still be showing GitHub's old 404. ② Reopen the extension popup and scan the **new** QR code; the link changes every 20 s. ③ From 1.0.4 on, the site's 404 page and the remote page recover the pairing from any mangled form (`#` encoded once, twice, or moved elsewhere) and redirect automatically. ④ If you still see the Chinese 404 page, tap *复制地址* (copy address) and send the address to the developer |
 | Phone shows "还没有配对" (not paired yet) | You opened the page address directly, or the link opened outside Chrome. Follow setup step 4 and make sure it opens in Chrome |
 | Toast says "页面上没有找到视频" (`NO_VIDEO`) | The active tab has no `<video>`, or the player has not loaded yet |

@@ -40,28 +40,51 @@
     return { modules: qr.getModuleCount(), cell };
   };
 
-  const renderNoQr = () => {
+  const renderNoQr = (reason) => {
     const el = $('qr');
     el.className = 'empty';
-    el.textContent = '还没有设置遥控网页地址,二维码暂不显示';
+    el.textContent = reason;
   };
 
-  // Human-readable reason for an unreachable remote page (most often: Pages not deployed yet).
-  const remoteWarnText = (check) =>
-    check.status === 404
-      ? '遥控网页地址打不开(HTTP 404),扫码后手机也会显示 404。请确认:① 代码已推送到 GitHub;② 仓库 Settings → Pages 已开启(分支 main,目录 / root);③ 地址里的用户名和仓库名拼写正确。刚推送时要等几分钟。'
-      : `遥控网页地址打不开(${check.status ? 'HTTP ' + check.status : check.error || '网络错误'})。请检查网络或地址拼写。`;
+  /**
+   * Pure decision: may we show a QR code for this address, and what should the user be told?
+   * A QR is shown ONLY when the address provably serves this app (page 200 + version.js readable);
+   * otherwise the phone would land on a 404 (GitHub's generic one for a wrong repo path / case).
+   */
+  const assessRemote = ({ remoteBaseUrl, remoteCheck: c }) => {
+    if (remoteBaseUrl.includes(PLACEHOLDER_MARK)) {
+      return { showQr: false, qrReason: '还没有设置遥控网页地址,二维码暂不显示', warn: null };
+    }
+    if (!c) return { showQr: false, qrReason: '正在检查遥控网页地址…', warn: null };
+    if (!c.isApp) {
+      const why = !c.ok
+        ? `这个地址打不开(${c.status ? 'HTTP ' + c.status : c.error || '网络错误'})`
+        : '这个地址能打开,但不是遥控网页(读不到 extension/lib/version.js)';
+      return {
+        showQr: false,
+        qrReason: '地址不对,二维码暂不显示',
+        warn: `${why},扫码后手机会显示 404。请检查:① 地址里的仓库名拼写和大小写(GitHub 区分大小写);② 代码已推送,Settings → Pages 已开启(main / root);③ 刚推送要等几分钟。`,
+        suggestedUrl: c.suggestedUrl,
+      };
+    }
+    const order = CR.compareVersions(c.remoteVersion, c.localVersion);
+    if (order > 0) {
+      return { showQr: true, warn: `Chromebook 上的扩展是旧版本(${c.localVersion}),线上已经是 ${c.remoteVersion}。请更新扩展文件夹并在 chrome://extensions 点"重新加载"(见 README)。` };
+    }
+    if (order < 0) {
+      return { showQr: true, warn: `线上遥控网页还是旧版本(${c.remoteVersion}),扩展是 ${c.localVersion}。请推送代码,等几分钟后点"重新检查"。` };
+    }
+    return { showQr: true, warn: null };
+  };
 
-  const versionMismatchText = (check) =>
-    `线上遥控网页的版本是 ${check.remoteVersion || '未知(旧版本没有版本号)'},扩展的版本是 ${check.localVersion}。GitHub Pages 还没有更新到最新代码:请推送代码,等几分钟后点"重新检查"。`;
-
-  const renderRemoteCheck = (check) => {
-    const unreachable = Boolean(check && !check.ok);
-    const mismatch = Boolean(check && check.ok && check.remoteVersion !== check.localVersion);
-    $('remoteWarn').hidden = !(unreachable || mismatch);
-    if (unreachable) $('remoteWarnText').textContent = remoteWarnText(check);
-    else if (mismatch) $('remoteWarnText').textContent = versionMismatchText(check);
-    if (check) $('versions').textContent = `扩展版本 ${check.localVersion} · 线上网页版本 ${check.remoteVersion || '—'}`;
+  const renderAssessment = (info, verdict) => {
+    const c = info.remoteCheck;
+    $('versions').textContent = `线上网页版本 ${c && c.remoteVersion ? c.remoteVersion : '—'}`;
+    $('remoteWarn').hidden = !verdict.warn;
+    $('remoteWarnText').textContent = verdict.warn || '';
+    $('suggest').hidden = !verdict.suggestedUrl;
+    $('suggest').textContent = verdict.suggestedUrl ? `改用 ${verdict.suggestedUrl}` : '';
+    $('suggest').dataset.url = verdict.suggestedUrl || '';
   };
 
   // Fresh "?t=" value every 20 s, even while the popup stays open: each scan yields a different URL,
@@ -74,35 +97,45 @@
     nonce = newNonce();
   }, NONCE_ROTATE_MS);
 
-  let lastPairUrl = '';
+  let lastQrKey = '';
 
   const render = async () => {
     const info = await bg('getStatus', { nonce });
-    if (!info.remoteCheck) $('versions').textContent = `扩展版本 ${info.version}`;
+    $('extVersion').textContent = `v${info.version}`;
     const key = statusKey(info.status);
     $('dot').className = `dot ${key}`;
     $('statusText').textContent = STATUS_TEXT[key](info.status || {});
     if (document.activeElement !== $('baseUrl')) $('baseUrl').value = info.remoteBaseUrl;
     const placeholder = info.remoteBaseUrl.includes(PLACEHOLDER_MARK);
     $('baseWarn').hidden = !placeholder;
-    $('copyUrl').disabled = placeholder;
-    $('pairUrl').textContent = placeholder ? '(未设置)' : info.pairUrl;
-    renderRemoteCheck(info.remoteCheck);
-    // Re-render only when the link changes (the popup refreshes status every 2 s).
-    if (info.pairUrl === lastPairUrl) return;
-    lastPairUrl = info.pairUrl;
-    if (placeholder) return renderNoQr();
+    const verdict = assessRemote(info);
+    renderAssessment(info, verdict);
+    $('copyUrl').disabled = !verdict.showQr;
+    $('pairUrl').textContent = verdict.showQr ? info.pairUrl : '(地址检查通过后才会显示)';
+    // Re-render the QR only when its content or visibility changes (status refreshes every 2 s).
+    const qrKey = verdict.showQr ? info.pairUrl : `none:${verdict.qrReason}`;
+    if (qrKey === lastQrKey) return;
+    lastQrKey = qrKey;
+    if (!verdict.showQr) return renderNoQr(verdict.qrReason);
     renderQr(info.pairUrl);
   };
 
   $('recheck').addEventListener('click', async () => {
     $('recheck').textContent = '检查中…';
-    renderRemoteCheck(await bg('recheckRemote'));
+    await bg('recheckRemote');
+    await render();
     $('recheck').textContent = '重新检查';
   });
 
+  $('suggest').addEventListener('click', async () => {
+    const url = $('suggest').dataset.url;
+    if (!url) return;
+    await bg('setBaseUrl', { remoteBaseUrl: url });
+    await render();
+  });
+
   $('copyUrl').addEventListener('click', async () => {
-    await navigator.clipboard.writeText(lastPairUrl);
+    await navigator.clipboard.writeText($('pairUrl').textContent);
     $('copyUrl').textContent = '已复制';
     setTimeout(() => {
       $('copyUrl').textContent = '复制配对链接';

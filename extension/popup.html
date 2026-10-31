@@ -11,7 +11,8 @@
       }
       body { margin: 0; width: 340px; padding: 16px; background: var(--bg); color: var(--text);
              font: 14px/1.4 system-ui, sans-serif; }
-      h1 { font-size: 16px; margin: 0 0 12px; }
+      h1 { font-size: 16px; margin: 0 0 12px; display: flex; align-items: baseline; gap: 8px; }
+      #extVersion { font-size: 20px; color: var(--accent); font-weight: 700; }
       .status { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
       .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); }
       .dot.online { background: var(--accent); } .dot.connected { background: var(--ok); }
@@ -36,7 +37,7 @@
     </style>
   </head>
   <body>
-    <h1>Chrome 遥控</h1>
+    <h1>Chrome 遥控 <span id="extVersion" title="扩展版本">—</span></h1>
     <div class="status"><span id="dot" class="dot"></span><span id="statusText">读取中…</span></div>
     <div id="qr"></div>
     <ol>
@@ -49,6 +50,7 @@
     <div id="remoteWarn" class="hint warn" hidden>
       <span id="remoteWarnText"></span>
       <div class="row"><button id="recheck">重新检查</button></div>
+      <div class="row"><button id="suggest" class="primary" hidden></button></div>
     </div>
     <p class="hint">扫不了码?复制链接发到手机上打开:<br /><span id="pairUrl"></span></p>
     <div class="row"><button id="copyUrl">复制配对链接</button></div>
@@ -67,6 +69,7 @@
     </div>
     <pre id="logs" hidden></pre>
 
+    <script src="lib/protocol.js"></script>
     <script src="vendor/qrcode.js"></script>
     <script src="popup.js"></script>
   </body>

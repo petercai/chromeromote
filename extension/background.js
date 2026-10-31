@@ -247,30 +247,60 @@ let remoteCheckCache = { url: null, at: 0, result: null };
 const checkRemoteUrl = async (url, { force = false } = {}) => {
   const fresh = remoteCheckCache.url === url && Date.now() - remoteCheckCache.at < REMOTE_CHECK_TTL_MS;
   if (fresh && !force) return remoteCheckCache.result;
-  let result;
-  try {
-    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(REMOTE_CHECK_TIMEOUT_MS) });
-    result = { ok: res.ok, status: res.status, checkedAt: Date.now() };
-  } catch (e) {
-    result = { ok: false, status: 0, error: String(e && e.name), checkedAt: Date.now() };
-  }
-  // Compare the deployed version with ours, so a stale GitHub Pages deploy is visible at a glance.
-  result.localVersion = CR_VERSION;
-  result.remoteVersion = result.ok ? await fetchRemoteVersion(url) : null;
+  const probe = await probeRemote(url);
+  // A wrong-case / wrong-name repo path gets GitHub's generic 404: suggest the lowercase path if it works.
+  const lower = lowercasePathVariant(url);
+  const suggestion = !probe.isApp && lower ? await probeRemote(lower) : null;
+  const result = {
+    ...probe,
+    localVersion: CR_VERSION,
+    suggestedUrl: suggestion && suggestion.isApp ? lower : null,
+    checkedAt: Date.now(),
+  };
   remoteCheckCache = { url, at: Date.now(), result };
-  log[result.ok ? 'info' : 'warn']('remote_url.check', {
+  log[result.isApp ? 'info' : 'warn']('remote_url.check', {
     url,
     ok: result.ok,
+    is_app: result.isApp,
     http_status: result.status,
     error: result.error,
     local_version: result.localVersion,
     remote_version: result.remoteVersion,
+    suggested_url: result.suggestedUrl,
   });
   return result;
 };
 
+/**
+ * Probe one base URL. `isApp` is the gate for showing a QR code: the page loads (200) AND the
+ * deployed extension/lib/version.js is readable, i.e. it really is this app, not some other page.
+ */
+const probeRemote = async (url) => {
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(REMOTE_CHECK_TIMEOUT_MS) });
+    const remoteVersion = res.ok ? await fetchRemoteVersion(url) : null;
+    return { ok: res.ok, status: res.status, remoteVersion, isApp: res.ok && Boolean(remoteVersion) };
+  } catch (e) {
+    return { ok: false, status: 0, error: String(e && e.name), remoteVersion: null, isApp: false };
+  }
+};
+
+/** Same URL with a lowercase path, or null when the path is already lowercase. */
+const lowercasePathVariant = (url) => {
+  try {
+    const u = new URL(url);
+    const lowered = u.pathname.toLowerCase();
+    if (lowered === u.pathname) return null;
+    u.pathname = lowered;
+    return u.toString();
+  } catch (_) {
+    return null;
+  }
+};
+
 // The phone page loads ../extension/lib/version.js, so the deployed copy sits next to it.
-const VERSION_RE = /CR_VERSION\s*=\s*'([^']+)'/;
+// Digits only: version.js's own doc comment contains the literal example `CR_VERSION = '…'`.
+const VERSION_RE = /CR_VERSION\s*=\s*'(\d+(?:\.\d+)+)'/;
 const fetchRemoteVersion = async (baseUrl) => {
   try {
     const res = await fetch(new URL('../extension/lib/version.js', baseUrl), {
