@@ -95,18 +95,18 @@
     clients.set(conn.connectionId, entry);
     log.info('conn.incoming', { remote_peer: conn.peer, connection_id: conn.connectionId });
 
-    const iceState = CRLog.watchIce(conn.peerConnection, log, { remote_peer: conn.peer });
+    const ice = CRLog.watchIce(conn.peerConnection, log, { remote_peer: conn.peer });
 
     // Two phases: ICE may need a STUN / TURN-relay path (slow on some networks, e.g. ChromeOS), so the
     // short hello deadline only starts once the data channel is open.
     let timer = setTimeout(() => {
-      log.warn('conn.open_timeout', { remote_peer: conn.peer, ice_state: iceState(), timeout_ms: OPEN_TIMEOUT_MS });
-      conn.close();
+      log.warn('conn.open_timeout', { remote_peer: conn.peer, ice_state: ice.state(), timeout_ms: OPEN_TIMEOUT_MS });
+      ice.report('open_timeout').finally(() => conn.close()); // stats first: a closed connection has none
     }, OPEN_TIMEOUT_MS);
 
     conn.on('open', () => {
       clearTimeout(timer);
-      log.info('conn.open', { remote_peer: conn.peer, ice_state: iceState() });
+      log.info('conn.open', { remote_peer: conn.peer, ice_state: ice.state() });
       timer = setTimeout(() => {
         if (entry.authed) return;
         log.warn('conn.auth_timeout', { remote_peer: conn.peer, timeout_ms: AUTH_TIMEOUT_MS });
@@ -154,7 +154,7 @@
     log.info('peer.creating', { peer_id: config.peerId });
     reportStatus('connecting');
     // Persisted token: the server lets this id be re-registered immediately (see background loadConfig).
-    peer = new Peer(config.peerId, { debug: 1, token: config.peerToken });
+    peer = new Peer(config.peerId, { debug: 1, token: config.peerToken, config: { iceServers: CR.ICE_SERVERS } });
 
     peer.on('open', (id) => {
       retryMs = RETRY_MIN_MS;

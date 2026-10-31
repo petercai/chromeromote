@@ -199,6 +199,14 @@
     return 0;
   };
 
+  // ICE servers for BOTH ends. PeerJS 1.5 defaults add turn:{eu,us}-0.turn.peerjs.com, whose hostnames
+  // no longer resolve (verified 2026-10-31), so they only add failing lookups. STUN finds public
+  // addresses; a working TURN relay (needed when no direct path exists) must come from an account.
+  const ICE_SERVERS = Object.freeze([
+    Object.freeze({ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }),
+    Object.freeze({ urls: 'stun:stun.cloudflare.com:3478' }),
+  ]);
+
   // Asset name published by .github/workflows/release-extension.yml (and written by npm run pack).
   const RELEASE_ASSET = 'chrome-remote-extension.zip';
 
@@ -235,6 +243,7 @@
     ERR,
     MSG,
     DEFAULT_HOME_URL,
+    ICE_SERVERS,
     newId,
     newKey,
     isKnownCmd,

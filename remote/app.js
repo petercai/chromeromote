@@ -330,12 +330,12 @@
       return;
     }
     setStatus('connecting');
-    const peer = new Peer({ debug: 1 });
+    const peer = new Peer({ debug: 1, config: { iceServers: CR.ICE_SERVERS } });
     app.peer = peer;
 
     // Watchdog: signaling, ICE or the hello/welcome handshake can stall without any error event.
     // Without this the UI would sit on "连接中…" forever; instead tear down and retry with backoff.
-    let iceState = () => 'not_started'; // replaced once the data connection exists
+    let ice = { state: () => 'not_started', report: () => Promise.resolve() }; // replaced once the data connection exists
     clearTimeout(app.connectTimer);
     app.connectTimer = setTimeout(() => {
       if (app.peer !== peer || app.status === 'connected') return;
@@ -343,8 +343,9 @@
         timeout_ms: CONNECT_TIMEOUT_MS,
         peer_open: peer.open,
         conn_open: Boolean(app.conn && app.conn.open),
-        ice_state: iceState(),
+        ice_state: ice.state(),
       });
+      ice.report('connect_timeout');
       setStatus('connecting', '电视端没有响应,正在重试');
       scheduleReconnect('connect_timeout');
     }, CONNECT_TIMEOUT_MS);
@@ -352,9 +353,9 @@
     peer.on('open', () => {
       const conn = peer.connect(app.pairing.peerId, { reliable: true });
       app.conn = conn;
-      iceState = CRLog.watchIce(conn.peerConnection, log, { peer_id: app.pairing.peerId });
+      ice = CRLog.watchIce(conn.peerConnection, log, { peer_id: app.pairing.peerId });
       conn.on('open', () => {
-        log.info('conn.open', { peer_id: app.pairing.peerId, ice_state: iceState() });
+        log.info('conn.open', { peer_id: app.pairing.peerId, ice_state: ice.state() });
         conn.send({ type: MSG.HELLO, key: app.pairing.key, client_id: clientId, v: PROTOCOL_VERSION });
       });
       conn.on('data', onData);
