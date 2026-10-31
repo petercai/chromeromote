@@ -64,13 +64,20 @@
     if (check) $('versions').textContent = `扩展版本 ${check.localVersion} · 线上网页版本 ${check.remoteVersion || '—'}`;
   };
 
-  // One random value per popup opening: the QR link changes each time, so the phone always reloads.
-  const NONCE = Date.now().toString(36);
+  // Fresh "?t=" value every 20 s, even while the popup stays open: each scan yields a different URL,
+  // so Chrome (which reuses one tab for links from Lens / the Google app) always does a real reload
+  // instead of a same-document hash jump onto a stale tab.
+  const NONCE_ROTATE_MS = 20000;
+  const newNonce = () => Date.now().toString(36);
+  let nonce = newNonce();
+  setInterval(() => {
+    nonce = newNonce();
+  }, NONCE_ROTATE_MS);
 
   let lastPairUrl = '';
 
   const render = async () => {
-    const info = await bg('getStatus', { nonce: NONCE });
+    const info = await bg('getStatus', { nonce });
     if (!info.remoteCheck) $('versions').textContent = `扩展版本 ${info.version}`;
     const key = statusKey(info.status);
     $('dot').className = `dot ${key}`;

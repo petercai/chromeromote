@@ -132,13 +132,33 @@
   };
 
   /**
-   * Repair a pairing URL whose `#` was percent-encoded by a scanner app (`/remote/%23peer=…`),
-   * which GitHub Pages answers with 404. Returns the fixed URL, or null when there is nothing to fix.
+   * Recover {peerId, key} from ANY shape of a pairing link, however a scanner app mangled it:
+   * `#` kept, encoded once (`%23`), twice (`%2523`), moved into the query or the path.
+   * The URL is decoded up to 3 times, then `peer=` / `key=` (32 hex chars) are searched anywhere.
+   * Returns null when no valid pairing is present.
    */
-  const repairPairUrl = (url) => {
-    const m = String(url || '').match(/^(.*?)%23(peer=.*)$/i);
+  const MAX_DECODE_PASSES = 3;
+  const PAIR_IN_TEXT_RE = /peer=([A-Za-z0-9_-]+)[\s\S]*?key=([0-9a-f]{32})(?![0-9a-f])/i;
+
+  const decodeRepeatedly = (text) => {
+    let current = String(text || '');
+    for (let i = 0; i < MAX_DECODE_PASSES; i += 1) {
+      let next;
+      try {
+        next = decodeURIComponent(current);
+      } catch (_) {
+        return current; // malformed escape: keep what we have
+      }
+      if (next === current) return current;
+      current = next;
+    }
+    return current;
+  };
+
+  const extractPairing = (href) => {
+    const m = decodeRepeatedly(href).match(PAIR_IN_TEXT_RE);
     if (!m) return null;
-    return `${m[1]}#${m[2]}`;
+    return { peerId: m[1], key: m[2].toLowerCase() };
   };
 
   /** Parse `#peer=..&key=..` from a URL hash; returns null when incomplete. */
@@ -177,7 +197,7 @@
     fail,
     validateCmd,
     buildPairUrl,
-    repairPairUrl,
+    extractPairing,
     parsePairHash,
     formatTime,
   });

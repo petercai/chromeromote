@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const { CMD, MSG, ERR, makeCmd, needsAck, parsePairHash, repairPairUrl, formatTime, newId, PROTOCOL_VERSION } = CR;
+  const { CMD, MSG, ERR, makeCmd, needsAck, parsePairHash, extractPairing, formatTime, newId, PROTOCOL_VERSION } = CR;
   const log = CRLog.createLogger('pwa');
 
   // -------------------------------------------------------------------------
@@ -43,11 +43,12 @@
   // Pairing (hash -> localStorage; hash is stripped so it does not linger in history)
   // -------------------------------------------------------------------------
   const loadPairing = () => {
-    // Scanner apps sometimes percent-encode "#": with "?t=" in the link the mangled form
-    // (…/remote/?t=x%23peer=…) still loads this page, so repair it here (404.html covers the rest).
-    const repaired = repairPairUrl(location.href);
-    if (repaired) log.warn('pairing.url_repaired', { from: location.search.slice(0, 20) });
-    const fromHash = parsePairHash(repaired ? new URL(repaired).hash : location.hash);
+    // Normal case: pairing in the hash. Fallback: scanner apps may mangle "#" (%23, %2523, …)
+    // while the page still loads (e.g. inside "?t="), so search the whole URL (404.html covers the rest).
+    const direct = parsePairHash(location.hash);
+    const recovered = direct ? null : extractPairing(location.href);
+    if (recovered) log.warn('pairing.url_repaired', { search: location.search.slice(0, 24), path: location.pathname });
+    const fromHash = direct || recovered;
     if (fromHash) {
       localStorage.setItem(STORAGE.pairing, JSON.stringify(fromHash));
       history.replaceState(null, '', location.pathname); // drop secrets (hash) and the one-off ?t= nonce
