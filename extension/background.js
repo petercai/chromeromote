@@ -21,7 +21,10 @@ const { CMD, ERR, ok, fail, executorOf, buildPairUrl, newKey, DEFAULT_HOME_URL }
 // ---------------------------------------------------------------------------
 const LOG_BUFFER_MAX = 500;
 const LOG_FLUSH_MS = 300;
-const DEFAULT_REMOTE_BASE_URL = 'https://YOUR_GITHUB_USER.github.io/chrome-remote/remote/';
+// The published phone page (GitHub Pages; the repo path is case-sensitive). A fresh install pairs with
+// no setup. Older installs that saved the original placeholder are migrated in loadConfig.
+const DEFAULT_REMOTE_BASE_URL = 'https://petercai.github.io/chromeromote/remote/';
+const LEGACY_PLACEHOLDER_MARK = 'YOUR_GITHUB_USER';
 const OFFSCREEN_URL = 'offscreen.html';
 
 // ---------------------------------------------------------------------------
@@ -51,6 +54,14 @@ const log = CRLog.createLogger('ext-sw', logSink);
 // ---------------------------------------------------------------------------
 const CONFIG_KEYS = Object.freeze(['peerId', 'peerToken', 'key', 'remoteBaseUrl']);
 
+/** Unset or legacy-placeholder address -> the default; a user-entered address is kept as is. */
+const migrateBaseUrl = (stored) => {
+  if (!stored) return DEFAULT_REMOTE_BASE_URL;
+  if (!stored.includes(LEGACY_PLACEHOLDER_MARK)) return stored;
+  log.info('config.base_url_migrated', { from: stored, to: DEFAULT_REMOTE_BASE_URL });
+  return DEFAULT_REMOTE_BASE_URL;
+};
+
 const loadConfig = async () => {
   const stored = await chrome.storage.local.get([...CONFIG_KEYS]);
   const config = {
@@ -60,7 +71,7 @@ const loadConfig = async () => {
     // a fresh random token per Peer caused "unavailable-id" (verified against 0.peerjs.com).
     peerToken: stored.peerToken || newKey(),
     key: stored.key || newKey(),
-    remoteBaseUrl: stored.remoteBaseUrl || DEFAULT_REMOTE_BASE_URL,
+    remoteBaseUrl: migrateBaseUrl(stored.remoteBaseUrl),
   };
   const missing = CONFIG_KEYS.filter((k) => config[k] !== stored[k]);
   if (missing.length > 0) {
@@ -155,6 +166,34 @@ const sendToTab = async (tabId, message, options) => {
 };
 
 // ---------------------------------------------------------------------------
+// Back / forward = the PAGE's own history (history.back() in the top frame), not chrome.tabs.goBack:
+// with nothing to go back to it is a no-op, so it can never close the tab (tabs opened by
+// target=_blank / window.open have no history; tab-level back failed or closed them). Works for
+// SPA routes too. Whether we really moved is confirmed by watching the tab's URL / loading state.
+// ---------------------------------------------------------------------------
+const HISTORY_WAIT_MS = 1500;
+const HISTORY_POLL_MS = 100;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitForNavigation = async (tabId, fromUrl) => {
+  const started = Date.now();
+  while (Date.now() - started < HISTORY_WAIT_MS) {
+    await sleep(HISTORY_POLL_MS);
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    if (!t) return { navigated: false, waited: Date.now() - started };
+    if (t.url !== fromUrl || t.status === 'loading') return { navigated: true, waited: Date.now() - started };
+  }
+  return { navigated: false, waited: Date.now() - started };
+};
+
+const historyNavigate = async (tab, direction) => {
+  await sendToTab(tab.id, { type: 'history', direction }, { frameId: 0 });
+  const { navigated, waited } = await waitForNavigation(tab.id, tab.url);
+  log.info('history.navigate', { direction: direction < 0 ? 'back' : 'forward', tab_id: tab.id, from_url: tab.url, navigated, waited_ms: waited });
+  return navigated ? ok() : fail(ERR.NO_HISTORY);
+};
+
+// ---------------------------------------------------------------------------
 // Fullscreen: window fullscreen (no user gesture needed) + in-page video fill
 // ---------------------------------------------------------------------------
 const toggleFullscreen = async (tab) => {
@@ -177,8 +216,8 @@ const toggleFullscreen = async (tab) => {
 // Executors (each returns {ok, errorCode, data}; never throws)
 // ---------------------------------------------------------------------------
 const BROWSER_ACTIONS = Object.freeze({
-  [CMD.BACK]: (tab) => chrome.tabs.goBack(tab.id).then(() => ok()),
-  [CMD.FORWARD]: (tab) => chrome.tabs.goForward(tab.id).then(() => ok()),
+  [CMD.BACK]: (tab) => historyNavigate(tab, -1),
+  [CMD.FORWARD]: (tab) => historyNavigate(tab, 1),
   [CMD.RELOAD]: (tab) => chrome.tabs.reload(tab.id).then(() => ok()),
   [CMD.HOME]: (tab) => chrome.tabs.update(tab.id, { url: DEFAULT_HOME_URL }).then(() => ok()),
   [CMD.FULLSCREEN]: (tab) => toggleFullscreen(tab),
@@ -324,7 +363,7 @@ const fetchRemoteVersion = async (baseUrl) => {
 // ---------------------------------------------------------------------------
 // Popup API
 // ---------------------------------------------------------------------------
-const isPlaceholderUrl = (url) => url.includes('YOUR_GITHUB_USER');
+const isPlaceholderUrl = (url) => url.includes(LEGACY_PLACEHOLDER_MARK);
 
 const getPopupStatus = async ({ nonce = '' } = {}) => {
   const config = await loadConfig();

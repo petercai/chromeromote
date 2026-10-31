@@ -50,6 +50,7 @@
     NO_TARGET: 'NO_TARGET',
     CLICK_IFRAME: 'CLICK_IFRAME',
     FULLSCREEN_FAILED: 'FULLSCREEN_FAILED',
+    NO_HISTORY: 'NO_HISTORY', // back/forward had nothing to go to: we stayed on the current page
     AUTOPLAY_BLOCKED: 'AUTOPLAY_BLOCKED', // unmuted play() refused without a real gesture; played muted instead
     PEER_UNAVAILABLE: 'PEER_UNAVAILABLE',
     TIMEOUT: 'TIMEOUT',

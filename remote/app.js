@@ -30,6 +30,7 @@
     [ERR.NO_VIDEO]: '页面上没有找到视频',
     [ERR.NO_TAB]: '没有找到 Chrome 标签页',
     [ERR.NO_TARGET]: '指针下没有可点击的内容',
+    [ERR.NO_HISTORY]: '已经是第一页了,没有上一页(停在当前页)',
     [ERR.CLICK_IFRAME]: '暂不支持点击嵌入框架内的内容',
     [ERR.AUTOPLAY_BLOCKED]: '浏览器阻止了有声播放,已静音播放;请调高音量',
     [ERR.NOT_PAIRED]: '密钥无效,请重新扫描电视上的二维码',

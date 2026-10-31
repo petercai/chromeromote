@@ -270,6 +270,14 @@
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message) return false;
     if (message.type === 'exec' && message.msg) return handleExec(message.msg, sendResponse);
+    // Page-level history (top frame only): a no-op when there is nothing to go to — never closes the tab.
+    if (message.type === 'history') {
+      if (!isTop) return false;
+      if (message.direction < 0) history.back();
+      else history.forward();
+      sendResponse(ok());
+      return false;
+    }
     if (message.type === 'fill') {
       setFill(Boolean(message.on));
       if (isTop) sendResponse(ok());

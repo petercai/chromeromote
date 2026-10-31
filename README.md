@@ -48,9 +48,12 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
    - **How to tell which version is running:** the top of the extension popup shows the version in
      large type (for example `v1.0.6`). **No version number there means a very old extension that must
      be updated**; it generates fixed, outdated QR codes.
-3. **Set the page address**
-   - Click the extension icon "Chrome 遥控".
-   - Enter the GitHub Pages address from step 1 and click *保存地址* (Save address).
+3. **Page address (normally nothing to do)**
+   - The extension's default address is already `https://petercai.github.io/chromeromote/remote/`
+     (from 1.0.8), so a fresh install on a new Chromebook shows the QR code right away.
+     Installs that still have the old placeholder address saved switch to it automatically.
+   - Only if you publish elsewhere (a fork or a different repository name): click the "Chrome 遥控"
+     icon, enter your GitHub Pages address and click *保存地址* (Save address).
 4. **Pair the phone (once)**
 
    > The remote page on the phone **does not scan QR codes itself**, and opening its address directly
@@ -99,6 +102,7 @@ phone you want to keep.
 | Phone shows **GitHub's own** 404 page ("There isn't a GitHub Pages site here") | The address in the QR code points **outside** this site, because our site answers any missing page with its own Chinese 404 page. ① Look at the top of the popup: no version number means the Chromebook runs an old extension; update it (setup step 2). ② Check that the page address saved in the popup matches the repository name exactly, including capitalisation (`ChromeRomote` ≠ `chromeromote`). From 1.0.6 the popup shows no QR code for a bad address and offers "改用 …" (use this address instead). ③ Close the old 404 tab on the phone and scan the new QR code |
 | `…/remote/` works, but the `#peer=…` link from the QR code shows 404 | ① **Close the old Chrome tab on the phone.** Lens and the Google app always open links in the same tab, and that tab may still be showing GitHub's old 404. ② Reopen the extension popup and scan the **new** QR code; the link changes every 20 s. ③ From 1.0.4 on, the site's 404 page and the remote page recover the pairing from any mangled form (`#` encoded once, twice, or moved elsewhere) and redirect automatically. ④ If you still see the Chinese 404 page, tap *复制地址* (copy address) and send the address to the developer |
 | Phone stays on "连接中…" (connecting) after reopening, and the popup shows `PEER_UNAVAILABLE:unavailable-id` | Fixed in 1.0.7. The extension now saves its PeerJS token, so after sleep, a restart or a network drop it reclaims its connection ID at once. Before, it took over a minute and dropped the phone in the meantime. The phone also retries on its own if it gets no answer within 12 s. Update the Chromebook extension to 1.0.7 (the popup header shows `v1.0.7`) |
+| Pressing 返回 (Back) closed the current page | Fixed in 1.0.9. Back now uses the page's own history (`history.back()`), so it goes to the previous page and stays put when there is none; it never closes a tab. A page that iyf.tv opened in a **new tab** has no previous page, so Back shows "已经是第一页了" (already on the first page). Use 首页 (Home) or the touchpad to go elsewhere |
 | Phone shows "还没有配对" (not paired yet) | You opened the page address directly, or the link opened outside Chrome. Follow setup step 4 and make sure it opens in Chrome |
 | Toast says "页面上没有找到视频" (`NO_VIDEO`) | The active tab has no `<video>`, or the player has not loaded yet |
 | Toast says "暂不支持点击嵌入框架内的内容" (`CLICK_IFRAME`) | The element under the pointer is inside an iframe, which v1 can't click (see the known limits in the implementation notes) |
