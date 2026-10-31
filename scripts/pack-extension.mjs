@@ -17,9 +17,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = path.join(ROOT, 'extension');
 const OUT_DIR = path.join(ROOT, 'dist');
-// Versioned file name (e.g. chrome-remote-extension-v1.0.10.zip) so Drive / Files app show the version.
+// Fixed file name: a re-upload replaces the same Drive file; the version shows in the extension popup.
 const OUT_PREFIX = 'chrome-remote-extension';
-const outFileFor = (version) => path.join(OUT_DIR, `${OUT_PREFIX}-v${version}.zip`);
+const OUT_FILE = path.join(OUT_DIR, `${OUT_PREFIX}.zip`);
 const VERSION_RE = /CR_VERSION\s*=\s*'(\d+(?:\.\d+)+)'/;
 
 // ---- CRC32 (IEEE) -------------------------------------------------------
@@ -120,8 +120,8 @@ const main = () => {
   if (!entries.some((e) => e.name === 'manifest.json')) throw new Error('manifest.json missing at ZIP root');
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  // Remove previously generated packages so only the current version is left to upload.
-  const outFile = outFileFor(manifest.version);
+  // Remove older (versioned) packages so only the current one is left to upload.
+  const outFile = OUT_FILE;
   const stale = fs
     .readdirSync(OUT_DIR)
     .filter((f) => f.startsWith(OUT_PREFIX) && f.endsWith('.zip') && path.join(OUT_DIR, f) !== outFile);

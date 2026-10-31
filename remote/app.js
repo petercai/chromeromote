@@ -17,7 +17,9 @@
   // Immutable settings
   // -------------------------------------------------------------------------
   const ACK_TIMEOUT_MS = 3000;
-  const CONNECT_TIMEOUT_MS = 12000; // signaling + ICE + hello/welcome must finish within this
+  // Signaling + ICE + hello/welcome must finish within this. ICE alone can exceed 10 s when the direct
+  // LAN path fails and a TURN relay is used (seen on Chromebooks); the extension allows 30 s for it.
+  const CONNECT_TIMEOUT_MS = 35000;
   const PING_INTERVAL_MS = 5000;
   const STATE_STALE_MS = 3500;
   const RETRY_MIN_MS = 1000;
@@ -333,10 +335,16 @@
 
     // Watchdog: signaling, ICE or the hello/welcome handshake can stall without any error event.
     // Without this the UI would sit on "连接中…" forever; instead tear down and retry with backoff.
+    let iceState = () => 'not_started'; // replaced once the data connection exists
     clearTimeout(app.connectTimer);
     app.connectTimer = setTimeout(() => {
       if (app.peer !== peer || app.status === 'connected') return;
-      log.warn('connect.timeout', { timeout_ms: CONNECT_TIMEOUT_MS, peer_open: peer.open, conn_open: Boolean(app.conn && app.conn.open) });
+      log.warn('connect.timeout', {
+        timeout_ms: CONNECT_TIMEOUT_MS,
+        peer_open: peer.open,
+        conn_open: Boolean(app.conn && app.conn.open),
+        ice_state: iceState(),
+      });
       setStatus('connecting', '电视端没有响应,正在重试');
       scheduleReconnect('connect_timeout');
     }, CONNECT_TIMEOUT_MS);
@@ -344,8 +352,9 @@
     peer.on('open', () => {
       const conn = peer.connect(app.pairing.peerId, { reliable: true });
       app.conn = conn;
+      iceState = CRLog.watchIce(conn.peerConnection, log, { peer_id: app.pairing.peerId });
       conn.on('open', () => {
-        log.info('conn.open', { peer_id: app.pairing.peerId });
+        log.info('conn.open', { peer_id: app.pairing.peerId, ice_state: iceState() });
         conn.send({ type: MSG.HELLO, key: app.pairing.key, client_id: clientId, v: PROTOCOL_VERSION });
       });
       conn.on('data', onData);

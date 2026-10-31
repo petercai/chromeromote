@@ -70,7 +70,9 @@
     }
     const order = CR.compareVersions(c.remoteVersion, c.localVersion);
     if (order > 0) {
-      return { showQr: true, warn: `Chromebook 上的扩展是旧版本(${c.localVersion}),线上已经是 ${c.remoteVersion}。请更新扩展文件夹并在 chrome://extensions 点"重新加载"(见 README)。` };
+      const zip = CR.releaseZipUrl(remoteBaseUrl);
+      const where = zip ? `用 Chrome 下载最新版 ${zip} ,解压后覆盖原来的扩展文件夹` : '从 GitHub Releases 下载最新版 ZIP,解压后覆盖原来的扩展文件夹';
+      return { showQr: true, warn: `Chromebook 上的扩展是旧版本(${c.localVersion}),线上已经是 ${c.remoteVersion}。请${where},再在 chrome://extensions 点"重新加载"(见 README)。` };
     }
     if (order < 0) {
       return { showQr: true, warn: `线上遥控网页还是旧版本(${c.remoteVersion}),扩展是 ${c.localVersion}。请推送代码,等几分钟后点"重新检查"。` };

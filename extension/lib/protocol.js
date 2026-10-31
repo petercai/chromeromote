@@ -199,6 +199,26 @@
     return 0;
   };
 
+  // Asset name published by .github/workflows/release-extension.yml (and written by npm run pack).
+  const RELEASE_ASSET = 'chrome-remote-extension.zip';
+
+  /**
+   * Latest-release ZIP address for a GitHub Pages remote URL (https://<owner>.github.io/<repo>/…):
+   * https://github.com/<owner>/<repo>/releases/latest/download/chrome-remote-extension.zip.
+   * null for any other host (custom domain, localhost) or an unparsable URL.
+   */
+  const releaseZipUrl = (remoteUrl) => {
+    let url;
+    try {
+      url = new URL(remoteUrl);
+    } catch (_) {
+      return null;
+    }
+    const owner = (url.hostname.match(/^([a-z0-9-]+).github.io$/i) || [])[1];
+    const repo = url.pathname.split('/').filter(Boolean)[0];
+    return owner && repo ? `https://github.com/${owner}/${repo}/releases/latest/download/${RELEASE_ASSET}` : null;
+  };
+
   /** Format seconds as h:mm:ss / m:ss for the phone UI. */
   const formatTime = (sec) => {
     if (!isFiniteNumber(sec) || sec < 0) return '--:--';
@@ -230,5 +250,6 @@
     parsePairHash,
     formatTime,
     compareVersions,
+    releaseZipUrl,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

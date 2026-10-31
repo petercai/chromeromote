@@ -15,7 +15,8 @@
   const { MSG, ERR, makeReply, validateCmd, needsAck, PROTOCOL_VERSION } = CR;
 
   // Immutable tuning
-  const AUTH_TIMEOUT_MS = 5000;
+  const OPEN_TIMEOUT_MS = 30000; // offer received -> data channel open (ICE, possibly via TURN relay)
+  const AUTH_TIMEOUT_MS = 5000; // data channel open -> valid hello
   const RETRY_MIN_MS = 2000;
   const RETRY_MAX_MS = 30000;
   // Signaling-level errors that heal by reconnecting (with the persisted token, even 'unavailable-id').
@@ -94,15 +95,27 @@
     clients.set(conn.connectionId, entry);
     log.info('conn.incoming', { remote_peer: conn.peer, connection_id: conn.connectionId });
 
-    const authTimer = setTimeout(() => {
-      if (entry.authed) return;
-      log.warn('conn.auth_timeout', { remote_peer: conn.peer });
-      conn.close();
-    }, AUTH_TIMEOUT_MS);
+    const iceState = CRLog.watchIce(conn.peerConnection, log, { remote_peer: conn.peer });
 
+    // Two phases: ICE may need a STUN / TURN-relay path (slow on some networks, e.g. ChromeOS), so the
+    // short hello deadline only starts once the data channel is open.
+    let timer = setTimeout(() => {
+      log.warn('conn.open_timeout', { remote_peer: conn.peer, ice_state: iceState(), timeout_ms: OPEN_TIMEOUT_MS });
+      conn.close();
+    }, OPEN_TIMEOUT_MS);
+
+    conn.on('open', () => {
+      clearTimeout(timer);
+      log.info('conn.open', { remote_peer: conn.peer, ice_state: iceState() });
+      timer = setTimeout(() => {
+        if (entry.authed) return;
+        log.warn('conn.auth_timeout', { remote_peer: conn.peer, timeout_ms: AUTH_TIMEOUT_MS });
+        conn.close();
+      }, AUTH_TIMEOUT_MS);
+    });
     conn.on('data', (data) => onData(entry, data));
     conn.on('close', () => {
-      clearTimeout(authTimer);
+      clearTimeout(timer);
       clients.delete(conn.connectionId);
       log.info('conn.closed', { client_id: entry.clientId, remote_peer: conn.peer });
       reportStatus(peer && peer.open ? 'online' : 'connecting');

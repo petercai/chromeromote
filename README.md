@@ -35,24 +35,31 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
    - **Before scanning, open the address in a desktop browser** and make sure you see the
      "还没有配对" (not paired yet) page, not a GitHub 404. The extension popup checks this too: if the
      address doesn't load, it shows a red warning with the HTTP status code.
-2. **Install the extension on the Chromebook (via Google Drive)**
-   - On the PC, run the VS Code task **"扩展:升级版本并打包"** (bump version and pack), or
-     `npm run pack`. This creates **`dist/chrome-remote-extension-v<version>.zip`** (for example `chrome-remote-extension-v1.0.10.zip`; older packages are removed), with `manifest.json` at the
-     root of the ZIP.
-   - Upload the ZIP to Google Drive.
-   - On the Chromebook, open the *Files* app → *Google Drive* and copy the ZIP to *My files*.
-     Double-click it, then copy the extracted folder out (for example to
-     *My files → chrome-remote-extension*).
+2. **Install the extension on the Chromebook (from GitHub Releases)**
+   - Every push to `main` that changes the extension version (`npm run bump` rewrites
+     `extension/manifest.json`) runs the GitHub Actions workflow
+     [release-extension.yml](.github/workflows/release-extension.yml): unit tests, `npm run pack`, then a
+     GitHub Release `v<version>` with **`chrome-remote-extension.zip`** attached. A version that is
+     already released is skipped; *Actions → Release extension → Run workflow* starts it by hand.
+   - On the Chromebook, open the always-latest download in Chrome:
+     `https://github.com/petercai/chromeromote/releases/latest/download/chrome-remote-extension.zip`
+     (for a fork: `https://github.com/<user>/<repo>/releases/latest/download/chrome-remote-extension.zip`).
+   - In the *Files* app, open the ZIP from *Downloads* and copy its contents to a folder, for example
+     *My files → chrome-remote-extension* (`manifest.json` must be directly inside that folder).
    - Open `chrome://extensions`, turn on *Developer mode*, click *Load unpacked* and select that
      folder.
-   - Why not a packed `.crx`? Chrome and ChromeOS refuse to install `.crx` files that don't come from
-     the Chrome Web Store (unless the device is enterprise-managed). A ZIP plus *Load unpacked* is the
-     route that works.
-   - Alternative without Drive: download the repository ZIP
-     (`https://github.com/<user>/<repo>/archive/refs/heads/main.zip`) and load its `extension/` folder.
-   - **Updating** (needed after every code change, or the Chromebook keeps running the old code):
-     download the ZIP again, **replace** the old folder, then click ⟳ *Reload* on the extension in
-     `chrome://extensions`.
+   - Why not a packed `.crx` that updates itself? Chrome and ChromeOS refuse to install `.crx` files that
+     don't come from the Chrome Web Store (unless the device is enterprise-managed). A ZIP plus *Load
+     unpacked* is the route that works, so updates are a manual download.
+   - **Updating** (after every new release, or the Chromebook keeps running the old code): download the
+     ZIP again from the same address, copy its contents over the **same folder** (replace the files),
+     then click ⟳ *Reload* on the extension in `chrome://extensions`. When the extension is older than
+     the live remote page, the popup says so and shows this download address.
+   - **Always reuse the same folder:** an unpacked extension's ID comes from its folder path. A new
+     folder means a new extension ID, so the connection ID, key and the phone pairing start over.
+   - Local build without Actions: the VS Code task **"扩展:升级版本并打包"** (bump version and pack), or
+     `npm run pack`, writes the same `dist/chrome-remote-extension.zip` (any file transfer works,
+     e.g. Google Drive).
    - **How to tell which version is running:** the top of the extension popup shows the version in
      large type (for example `v1.0.6`). **No version number there means a very old extension that must
      be updated**; it generates fixed, outdated QR codes.
@@ -128,7 +135,7 @@ Open *Terminal → Run Task…* (the default build task is `Ctrl+Shift+B`):
 | Task | What it does |
 |------|--------------|
 | 扩展:升级版本号 (bump version) | `npm run bump`: version +1 in `version.js`, `manifest.json` and the `?v=` cache-busting parameters |
-| 扩展:打包 (pack extension) | `npm run pack`: writes `dist/chrome-remote-extension-v<version>.zip` for Google Drive |
+| 扩展:打包 (pack extension) | `npm run pack`: writes `dist/chrome-remote-extension.zip` locally (the same file the release workflow publishes) |
 | 扩展:升级版本并打包 (bump + pack) | Runs both in order (**default build task**) |
 
 ## Library (片单), several Chromebooks, sync (1.0.13)

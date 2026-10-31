@@ -1,0 +1,78 @@
+# Build + release the Chrome extension whenever its version changes.
+#
+# Trigger: a push to main that touches extension/manifest.json (npm run bump rewrites it), or a manual run.
+# Idempotent: the release tag is v<manifest version>; if it already exists the run only logs and exits,
+# so manifest edits that keep the version (permissions, descriptions…) never produce duplicates.
+#
+# The Chromebook installs/updates from the stable "latest" asset URL:
+#   https://github.com/<owner>/<repo>/releases/latest/download/chrome-remote-extension.zip
+name: Release extension
+
+on:
+  push:
+    branches: [main]
+    paths: ['extension/manifest.json']
+  workflow_dispatch:
+
+permissions:
+  contents: write # create tags + releases
+
+concurrency:
+  group: release-extension
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ASSET: dist/chrome-remote-extension.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Read version and check for an existing release
+        id: version
+        run: |
+          version=$(node -p "require('./extension/manifest.json').version")
+          tag="v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::notice title=release.skip::${tag} already released; version unchanged"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=release.new::building ${tag} from ${GITHUB_SHA::7}"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Unit tests use only node built-ins: no npm install needed (e2e needs a desktop Chromium; not run here).
+      - name: Unit tests
+        if: steps.version.outputs.exists == 'false'
+        run: npm test
+
+      # pack fails if manifest.json and lib/version.js disagree (i.e. a hand-edited version without npm run bump).
+      - name: Pack
+        if: steps.version.outputs.exists == 'false'
+        run: npm run pack
+
+      - name: Create release
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          tag='${{ steps.version.outputs.tag }}'
+          gh release create "$tag" "$ASSET" \
+            --target "$GITHUB_SHA" \
+            --title "Chrome 遥控扩展 ${tag}" \
+            --generate-notes \
+            --latest
+          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/latest/download/chrome-remote-extension.zip"
+          {
+            echo "### Released ${tag}"
+            echo ""
+            echo "- Size: $(stat -c %s "$ASSET") bytes"
+            echo "- Chromebook download (always the latest): ${url}"
+            echo "- Update: extract over the SAME folder, then Reload in chrome://extensions"
+          } >> "$GITHUB_STEP_SUMMARY"
