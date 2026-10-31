@@ -55,8 +55,11 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
      ZIP again from the same address, copy its contents over the **same folder** (replace the files),
      then click ⟳ *Reload* on the extension in `chrome://extensions`. When the extension is older than
      the live remote page, the popup says so and shows this download address.
-   - **Always reuse the same folder:** an unpacked extension's ID comes from its folder path. A new
-     folder means a new extension ID, so the connection ID, key and the phone pairing start over.
+   - **Fixed extension ID** `bikeapbfiblpjkpmafaenamcofldneme` (from 1.0.19): `manifest.json` carries a
+     public `key`, so the ID is the same on every machine and in every folder. That is what lets the
+     library (片单) sync between machines (`chrome.storage.sync` is per extension ID), and an update no
+     longer has to reuse the same folder. **Upgrading from 1.0.18 or older changes the ID once**: scan
+     the QR code again on the phone and re-add your bookmarks (the old ID's data can't be read).
    - Local build without Actions: the VS Code task **"扩展:升级版本并打包"** (bump version and pack), or
      `npm run pack`, writes the same `dist/chrome-remote-extension.zip` (any file transfer works,
      e.g. Google Drive).
@@ -126,6 +129,7 @@ phone you want to keep.
 | Pressing 返回 (Back) closed the current page | Fixed in 1.0.9. Back now uses the page's own history (`history.back()`), so it goes to the previous page and stays put when there is none; it never closes a tab. A page that iyf.tv opened in a **new tab** has no previous page, so Back shows "已经是第一页了" (already on the first page). Use 首页 (Home) or the touchpad to go elsewhere |
 | Phone shows "还没有配对" (not paired yet) | You opened the page address directly, or the link opened outside Chrome. Follow setup step 4 and make sure it opens in Chrome |
 | Toast says "页面上没有找到视频" (`NO_VIDEO`) | The active tab has no `<video>`, or the player has not loaded yet |
+| Bookmarks made on one Chromebook don't show up on another | ① Both must show the same ID `bikeapbfiblpjkpmafaenamcofldneme` in `chrome://extensions` (1.0.19 or newer; before that every machine had its own ID and never shared data). ② Both are signed in to the same Google account with sync on, and *Settings → Sync → Extensions* is on. ③ Chrome syncs by itself, usually within a minute; there is no manual sync button. The extension log shows `library.sync_changed` with `origin: remote` when data arrives |
 | Toast says "Chrome 没有打开的窗口,点「首页」打开" (no open Chrome window, `TAB_NOT_FOUND`) | All Chrome windows are closed. On ChromeOS the extension and the phone link stay connected anyway. From 1.0.17, tapping 首页 (Home) or opening a library entry opens a new maximized Chrome window; the library list keeps working without a window |
 | Toast says "暂不支持点击嵌入框架内的内容" (`CLICK_IFRAME`) | The element under the pointer is inside an iframe, which v1 can't click (see the known limits in the implementation notes) |
 | Toast says "已静音播放" (played muted, `AUTOPLAY_BLOCKED`) | Chrome's autoplay policy blocked playback with sound. Raise the volume slider, or click once on the page by hand |

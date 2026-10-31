@@ -609,14 +609,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Lifecycle hooks
 // ---------------------------------------------------------------------------
 chrome.runtime.onStartup.addListener(() => {
-  log.info('lifecycle.startup');
+  log.info('lifecycle.startup', { ext_id: chrome.runtime.id });
   ensureOffscreen();
   migrateLibraryToSync().catch((e) => log.error('library.migrate_failed', { error: String(e) }));
 });
 chrome.runtime.onInstalled.addListener((details) => {
-  log.info('lifecycle.installed', { reason: details.reason });
+  log.info('lifecycle.installed', { reason: details.reason, ext_id: chrome.runtime.id });
   loadConfig().then(ensureOffscreen);
   migrateLibraryToSync().catch((e) => log.error('library.migrate_failed', { error: String(e) }));
+});
+// Library changes arriving through Chrome sync (another machine, same account, same fixed ext_id).
+// Local writes also fire this; libraryLastWrite (set right after our own writes) tells them apart.
+chrome.storage.onChanged.addListener(async (changes, area) => {
+  if (area !== 'sync') return;
+  const keys = Object.keys(changes);
+  const { libraryLastWrite = 0 } = await chrome.storage.local.get('libraryLastWrite');
+  const { recent, bookmarks } = await readLibrary();
+  log.info('library.sync_changed', {
+    origin: Date.now() - libraryLastWrite < 2000 ? 'local' : 'remote',
+    changed: keys.length,
+    bookmark_keys: keys.filter(CRLib.isBookmarkStorageKey).length,
+    recent: recent.length,
+    bookmarks: bookmarks.length,
+  });
 });
 chrome.tabs.onActivated.addListener(() => announceNoVideo());
 chrome.tabs.onUpdated.addListener((tabId, info) => {
