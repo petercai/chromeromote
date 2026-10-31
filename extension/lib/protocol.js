@@ -49,6 +49,12 @@
   // High-frequency input that is fire-and-forget (no ack) to avoid flooding the channel.
   const FIRE_AND_FORGET = Object.freeze([CMD.MOVE, CMD.SCROLL]);
 
+  // What a command needs from the target tab. On ChromeOS the extension (and the phone link) outlives
+  // the last closed browser window, so commands that navigate anyway may open a fresh window.
+  const TAB_NEED = Object.freeze({ NONE: 'none', LAUNCH: 'launch', REQUIRED: 'required' });
+  const TAB_FREE_CMDS = Object.freeze([CMD.PING, CMD.LIBRARY_LIST, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE]);
+  const TAB_LAUNCH_CMDS = Object.freeze([CMD.HOME, CMD.OPEN_ENTRY]);
+
   // Stable error codes, surfaced in logs and on the phone's error toast.
   const ERR = Object.freeze({
     BAD_MESSAGE: 'BAD_MESSAGE',
@@ -97,6 +103,11 @@
     return null;
   };
   const needsAck = (cmd) => !FIRE_AND_FORGET.includes(cmd);
+  const tabNeedOf = (cmd) => {
+    if (TAB_FREE_CMDS.includes(cmd)) return TAB_NEED.NONE;
+    if (TAB_LAUNCH_CMDS.includes(cmd)) return TAB_NEED.LAUNCH;
+    return TAB_NEED.REQUIRED;
+  };
 
   const makeCmd = ({ cmd, args = {}, cmdId = newId() }) => ({ type: MSG.CMD, cmd_id: cmdId, cmd, args, ts: Date.now() });
   const makeReply = ({ cmdId, ok, errorCode = null, data = null }) => ({
@@ -249,6 +260,8 @@
     isKnownCmd,
     executorOf,
     needsAck,
+    TAB_NEED,
+    tabNeedOf,
     makeCmd,
     makeReply,
     ok,

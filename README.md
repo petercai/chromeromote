@@ -120,6 +120,7 @@ phone you want to keep.
 | Pressing 返回 (Back) closed the current page | Fixed in 1.0.9. Back now uses the page's own history (`history.back()`), so it goes to the previous page and stays put when there is none; it never closes a tab. A page that iyf.tv opened in a **new tab** has no previous page, so Back shows "已经是第一页了" (already on the first page). Use 首页 (Home) or the touchpad to go elsewhere |
 | Phone shows "还没有配对" (not paired yet) | You opened the page address directly, or the link opened outside Chrome. Follow setup step 4 and make sure it opens in Chrome |
 | Toast says "页面上没有找到视频" (`NO_VIDEO`) | The active tab has no `<video>`, or the player has not loaded yet |
+| Toast says "Chrome 没有打开的窗口,点「首页」打开" (no open Chrome window, `TAB_NOT_FOUND`) | All Chrome windows are closed. On ChromeOS the extension and the phone link stay connected anyway. From 1.0.17, tapping 首页 (Home) or opening a library entry opens a new maximized Chrome window; the library list keeps working without a window |
 | Toast says "暂不支持点击嵌入框架内的内容" (`CLICK_IFRAME`) | The element under the pointer is inside an iframe, which v1 can't click (see the known limits in the implementation notes) |
 | Toast says "已静音播放" (played muted, `AUTOPLAY_BLOCKED`) | Chrome's autoplay policy blocked playback with sound. Raise the volume slider, or click once on the page by hand |
 

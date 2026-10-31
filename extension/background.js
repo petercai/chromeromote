@@ -14,7 +14,7 @@
  */
 importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js', 'lib/library.js');
 
-const { CMD, ERR, ok, fail, executorOf, buildPairUrl, newKey, DEFAULT_HOME_URL } = CR;
+const { CMD, ERR, TAB_NEED, ok, fail, executorOf, tabNeedOf, buildPairUrl, newKey, DEFAULT_HOME_URL } = CR;
 
 // ---------------------------------------------------------------------------
 // Immutable settings
@@ -145,6 +145,32 @@ const getTargetTab = async () => {
   if (focused) return focused;
   const [anyActive] = await chrome.tabs.query({ active: true, windowType: 'normal' });
   return anyActive || null;
+};
+
+// ChromeOS keeps the extension (and the phone link) alive after the last browser window closes:
+// a "launch" command then opens a fresh maximized window and runs in its tab.
+const launchWindow = async (cmd) => {
+  const started = Date.now();
+  const win = await chrome.windows.create({ focused: true, state: 'maximized' });
+  const tab = (win.tabs && win.tabs[0]) || null;
+  log.info('window.launched', { cmd, window_id: win.id, tab_id: tab && tab.id, latency_ms: Date.now() - started });
+  return tab;
+};
+
+/** Target tab for a command per its TAB_NEED; null means "none available" (or not needed). */
+const resolveTab = async (cmd) => {
+  const need = tabNeedOf(cmd);
+  const tab = await getTargetTab();
+  if (need !== TAB_NEED.LAUNCH) return tab;
+  if (tab) {
+    // Navigating commands also bring a minimized / background window to the front.
+    await chrome.windows.update(tab.windowId, { focused: true }).catch((e) => log.warn('window.focus_failed', { cmd, window_id: tab.windowId, error: String(e) }));
+    return tab;
+  }
+  return launchWindow(cmd).catch((e) => {
+    log.error('window.launch_failed', { cmd, error: String(e && e.message) });
+    return null;
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -371,19 +397,20 @@ const executeCommand = async (msg, clientId) => {
   const executor = EXECUTORS[executorOf(msg.cmd)];
   if (!executor) return fail(ERR.UNKNOWN_CMD);
 
-  const tab = await getTargetTab();
-  if (!tab) {
-    log.warn('cmd.no_tab', base);
+  const tab = await resolveTab(msg.cmd);
+  if (!tab && tabNeedOf(msg.cmd) !== TAB_NEED.NONE) {
+    log.warn('cmd.no_tab', { ...base, tab_need: tabNeedOf(msg.cmd) });
     return fail(ERR.NO_TAB);
   }
+  const tabId = tab ? tab.id : null;
 
   try {
-    const result = await executor(tab, msg);
+    const result = await executor(tab, msg); // tab is null only for TAB_NEED.NONE commands
     const level = result.ok ? 'debug' : 'warn';
-    log[level]('cmd.result', { ...base, tab_id: tab.id, ok: result.ok, error_code: result.errorCode, latency_ms: Date.now() - started });
+    log[level]('cmd.result', { ...base, tab_id: tabId, ok: result.ok, error_code: result.errorCode, latency_ms: Date.now() - started });
     return result;
   } catch (e) {
-    log.error('cmd.exception', { ...base, tab_id: tab.id, error: String(e), latency_ms: Date.now() - started });
+    log.error('cmd.exception', { ...base, tab_id: tabId, error: String(e), latency_ms: Date.now() - started });
     return fail(ERR.INTERNAL, { message: String(e && e.message) });
   }
 };
