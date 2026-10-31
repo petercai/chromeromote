@@ -6,5 +6,5 @@
  */
 (function (root) {
   'use strict';
-  root.CR_VERSION = '1.0.6';
+  root.CR_VERSION = '1.0.7';
 })(typeof globalThis !== 'undefined' ? globalThis : this);

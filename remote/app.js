@@ -15,6 +15,7 @@
   // Immutable settings
   // -------------------------------------------------------------------------
   const ACK_TIMEOUT_MS = 3000;
+  const CONNECT_TIMEOUT_MS = 12000; // signaling + ICE + hello/welcome must finish within this
   const PING_INTERVAL_MS = 5000;
   const STATE_STALE_MS = 3500;
   const RETRY_MIN_MS = 1000;
@@ -81,6 +82,7 @@
     statusDetail: '',
     retryMs: RETRY_MIN_MS,
     retryTimer: null,
+    connectTimer: null,
     pending: new Map(), // cmd_id -> {resolve, timer, sentAt}
     video: { hasVideo: false },
     videoTs: 0,
@@ -221,6 +223,7 @@
   const onData = (data) => {
     if (!data || typeof data !== 'object') return;
     if (data.type === MSG.WELCOME) {
+      clearTimeout(app.connectTimer);
       app.retryMs = RETRY_MIN_MS;
       setStatus('connected');
       return;
@@ -253,6 +256,16 @@
     setStatus('connecting');
     const peer = new Peer({ debug: 1 });
     app.peer = peer;
+
+    // Watchdog: signaling, ICE or the hello/welcome handshake can stall without any error event.
+    // Without this the UI would sit on "连接中…" forever; instead tear down and retry with backoff.
+    clearTimeout(app.connectTimer);
+    app.connectTimer = setTimeout(() => {
+      if (app.peer !== peer || app.status === 'connected') return;
+      log.warn('connect.timeout', { timeout_ms: CONNECT_TIMEOUT_MS, peer_open: peer.open, conn_open: Boolean(app.conn && app.conn.open) });
+      setStatus('connecting', '电视端没有响应,正在重试');
+      scheduleReconnect('connect_timeout');
+    }, CONNECT_TIMEOUT_MS);
 
     peer.on('open', () => {
       const conn = peer.connect(app.pairing.peerId, { reliable: true });

@@ -49,17 +49,23 @@ const log = CRLog.createLogger('ext-sw', logSink);
 // ---------------------------------------------------------------------------
 // Config (source of truth: chrome.storage.local)
 // ---------------------------------------------------------------------------
+const CONFIG_KEYS = Object.freeze(['peerId', 'peerToken', 'key', 'remoteBaseUrl']);
+
 const loadConfig = async () => {
-  const stored = await chrome.storage.local.get(['peerId', 'key', 'remoteBaseUrl']);
+  const stored = await chrome.storage.local.get([...CONFIG_KEYS]);
   const config = {
     peerId: stored.peerId || `cr-${CR.newId()}`,
+    // PeerJS only lets an ID be re-registered with the SAME token while the server still holds the
+    // old session (abrupt drop, sleep, restart). A persisted token makes the ID reclaimable at once;
+    // a fresh random token per Peer caused "unavailable-id" (verified against 0.peerjs.com).
+    peerToken: stored.peerToken || newKey(),
     key: stored.key || newKey(),
     remoteBaseUrl: stored.remoteBaseUrl || DEFAULT_REMOTE_BASE_URL,
   };
-  const changed = config.peerId !== stored.peerId || config.key !== stored.key || config.remoteBaseUrl !== stored.remoteBaseUrl;
-  if (changed) {
+  const missing = CONFIG_KEYS.filter((k) => config[k] !== stored[k]);
+  if (missing.length > 0) {
     await chrome.storage.local.set(config);
-    log.info('config.created', { peer_id: config.peerId, key: CRLog.redact(config.key) });
+    log.info('config.initialized', { peer_id: config.peerId, filled: missing, key: CRLog.redact(config.key) });
   }
   return config;
 };
@@ -337,8 +343,8 @@ const getPopupStatus = async ({ nonce = '' } = {}) => {
 
 const BG_HANDLERS = Object.freeze({
   getConfig: async () => {
-    const { peerId, key } = await loadConfig();
-    return { peerId, key };
+    const { peerId, peerToken, key } = await loadConfig();
+    return { peerId, peerToken, key };
   },
   cmd: ({ msg, clientId }) => executeCommand(msg, clientId),
   status: ({ status }) => applyStatus(status).then(() => true),

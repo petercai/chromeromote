@@ -18,7 +18,8 @@
   const AUTH_TIMEOUT_MS = 5000;
   const RETRY_MIN_MS = 2000;
   const RETRY_MAX_MS = 30000;
-  const FATAL_PEER_ERRORS = Object.freeze(['unavailable-id', 'network', 'server-error', 'socket-error', 'socket-closed']);
+  // Signaling-level errors that heal by reconnecting (with the persisted token, even 'unavailable-id').
+  const RECOVERABLE_PEER_ERRORS = Object.freeze(['unavailable-id', 'network', 'server-error', 'socket-error', 'socket-closed', 'disconnected']);
 
   const toBg = (payload) => chrome.runtime.sendMessage({ target: 'bg', ...payload });
   const log = CRLog.createLogger('ext-offscreen', (entry) => toBg({ type: 'log', entry }).catch(() => {}));
@@ -111,30 +112,35 @@
   // -------------------------------------------------------------------------
   // Peer lifecycle with exponential backoff
   // -------------------------------------------------------------------------
-  const scheduleRestart = (reason) => {
+  // Signaling-server trouble is recovered IN PLACE: peer.reconnect() keeps the same id + token, so the
+  // server accepts it even while it still holds the old session. Established phone data channels are
+  // peer-to-peer and survive signaling loss, so they are never closed here.
+  const closeAllClients = (reason) => {
+    if (clients.size > 0) log.info('conn.close_all', { reason, count: clients.size });
+    clients.forEach(({ conn }) => conn.close());
+    clients.clear();
+  };
+
+  const scheduleRecover = (reason) => {
     if (retryTimer) return;
-    log.warn('peer.restart_scheduled', { reason, retry_ms: retryMs });
+    const action = peer && !peer.destroyed ? 'reconnect' : 'recreate';
+    log.warn('peer.recover', { reason, action, retry_ms: retryMs });
+    reportStatus('connecting');
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      createPeer();
+      if (peer && !peer.destroyed && peer.disconnected) return peer.reconnect();
+      if (!peer || peer.destroyed) return createPeer();
+      // Peer still connected (transient error already resolved): nothing to do.
     }, retryMs);
     retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
   };
 
-  const destroyPeer = () => {
-    clients.forEach(({ conn }) => conn.close());
-    clients.clear();
-    if (peer) {
-      peer.destroy();
-      peer = null;
-    }
-  };
-
   const createPeer = () => {
-    destroyPeer();
-    reportStatus('connecting');
+    if (peer && !peer.destroyed) peer.destroy();
     log.info('peer.creating', { peer_id: config.peerId });
-    peer = new Peer(config.peerId, { debug: 1 });
+    reportStatus('connecting');
+    // Persisted token: the server lets this id be re-registered immediately (see background loadConfig).
+    peer = new Peer(config.peerId, { debug: 1, token: config.peerToken });
 
     peer.on('open', (id) => {
       retryMs = RETRY_MIN_MS;
@@ -143,27 +149,46 @@
       reportStatus('online');
     });
     peer.on('connection', onConnection);
-    peer.on('disconnected', () => {
-      // Lost the signaling server only; existing data channels keep working.
-      log.warn('peer.signaling_disconnected');
-      if (peer && !peer.destroyed) peer.reconnect();
-    });
+    peer.on('disconnected', () => scheduleRecover('signaling_disconnected'));
+    peer.on('close', () => log.warn('peer.closed'));
     peer.on('error', (err) => {
       lastError = `${ERR.PEER_UNAVAILABLE}:${err.type}`;
+      if (RECOVERABLE_PEER_ERRORS.includes(err.type)) {
+        log.warn('peer.error_recoverable', { type: err.type, error: String(err) });
+        scheduleRecover(err.type);
+        return;
+      }
       log.error('peer.error', { type: err.type, error: String(err) });
       reportStatus('error');
-      if (FATAL_PEER_ERRORS.includes(err.type)) scheduleRestart(err.type);
     });
   };
 
+  const loadRemoteConfig = async () => {
+    const next = await toBg({ type: 'getConfig' });
+    if (!next || !next.peerId || !next.peerToken) throw new Error('config incomplete');
+    return next;
+  };
+
   const start = async () => {
-    config = await toBg({ type: 'getConfig' });
-    if (!config || !config.peerId) {
-      log.error('config.missing');
+    try {
+      config = await loadRemoteConfig();
+    } catch (e) {
+      log.error('config.missing', { error: String(e) });
       setTimeout(start, RETRY_MIN_MS);
       return;
     }
     createPeer();
+  };
+
+  // Key regenerated: only phones must re-authenticate. Keep the Peer (same id + token) to avoid churn.
+  const reloadConfig = async () => {
+    const next = await loadRemoteConfig();
+    const identityChanged = next.peerId !== config.peerId || next.peerToken !== config.peerToken;
+    config = next;
+    closeAllClients('config_reload');
+    log.info('config.reload', { identity_changed: identityChanged });
+    if (identityChanged) createPeer();
+    else reportStatus(peer && peer.open ? 'online' : 'connecting');
   };
 
   // -------------------------------------------------------------------------
@@ -176,8 +201,7 @@
       return false;
     }
     if (message.type === 'reloadConfig') {
-      log.info('config.reload');
-      start();
+      reloadConfig().catch((e) => log.error('config.reload_failed', { error: String(e) }));
     }
     return false;
   });

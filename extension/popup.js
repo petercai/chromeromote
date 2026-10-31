@@ -11,7 +11,8 @@
   const STATUS_TEXT = Object.freeze({
     connected: (s) => `已连接 ${s.clients} 台手机`,
     online: () => '等待手机连接',
-    connecting: () => '正在连接信令服务器…',
+    // While recovering from a signaling hiccup the last error is kept as the reason (not a red error).
+    connecting: (s) => (s.error ? `正在重新连接信令服务器…(${s.error})` : '正在连接信令服务器…'),
     error: (s) => `错误:${s.error || '未知'}`,
   });
 
