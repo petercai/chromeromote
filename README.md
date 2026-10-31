@@ -170,6 +170,18 @@ Open *Terminal → Run Task…* (the default build task is `Ctrl+Shift+B`):
 - **Diagnostics:** in the phone page's DevTools console, `CRRemote.send('libraryList')` and
   `CRRemote.devices()`.
 
+## Episode list (选集, 1.0.20)
+
+- On an iyf.tv play page, the 播放 (Play) tab shows a **选集** row, for example "第 27 集 / 共 27 集 + 2 个特别篇".
+- **⏮ / ⏭** at both ends of the play controls open the previous / next **numbered** episode. Specials
+  (text items such as "一生一瞬旁白版") are skipped. Long shows split into ranges (01-50, 51-100, …) cross the
+  range edge by themselves.
+- Tap the 选集 row for the full list: range tabs for long shows, a grid of numbered episodes, and the
+  specials listed separately with where they sit ("在 09 之后"). Tap one to play it on the TV.
+- Only iyf.tv for now. Another site is one more entry in the adapter table in `extension/lib/playlist.js`.
+- If the row doesn't appear on an iyf.tv episode page, the site's layout probably changed: the extension log
+  shows `playlist.not_found` with the selector that no longer matches.
+
 ## Version number: is GitHub serving my latest code?
 
 - The version (for example `1.0.3`) is defined in exactly one place:

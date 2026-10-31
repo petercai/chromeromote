@@ -17,6 +17,8 @@
   // Immutable settings
   // -------------------------------------------------------------------------
   const ACK_TIMEOUT_MS = 3000;
+  // Episode-list commands may switch the site's range tabs (up to ~2.5 s each) before answering.
+  const SLOW_ACK_TIMEOUT_MS = 8000;
   // Signaling + ICE + hello/welcome must finish within this. ICE alone can exceed 10 s when the direct
   // LAN path fails and a TURN relay is used (seen on Chromebooks); the extension allows 30 s for it.
   const CONNECT_TIMEOUT_MS = 35000;
@@ -34,6 +36,8 @@
 
   const ERROR_TEXT = Object.freeze({
     [ERR.NO_VIDEO]: '页面上没有找到视频',
+    [ERR.NO_PLAYLIST]: '这个页面没有选集',
+    [ERR.NO_EPISODE]: '没有上一集 / 下一集了',
     [ERR.NO_TAB]: 'Chrome 没有打开的窗口,点「首页」打开',
     [ERR.NO_TARGET]: '指针下没有可点击的内容',
     [ERR.NO_HISTORY]: '已经是第一页了,没有上一页(停在当前页)',
@@ -120,6 +124,8 @@
     libSeg: 'recent',
     libKey: null, // entryKey of the page the library was last refreshed for
     confirm: null, // {title, body, run} while the delete sheet is open
+    playlist: null, // episode-list summary pushed with the video state (design 3.11), null = none
+    plSheet: null, // {loading, data, error} while the episode sheet is open
     switcherOpen: false,
     showHelp: false, // "add Chromebook" instructions over a paired session
     probes: new Map(), // peerId -> resolver of an in-flight online probe
@@ -177,6 +183,9 @@
 
   const videoAvailable = () => app.status === 'connected' && app.video.hasVideo && Date.now() - app.videoTs < STATE_STALE_MS;
 
+  // Previous / next episode buttons follow the pushed summary (data-dir -1 / 1).
+  const playlistAllows = (b) => Boolean(app.playlist) && (Number(b.dataset.dir) < 0 ? app.playlist.hasPrev : app.playlist.hasNext);
+
   const renderStatus = () => {
     $('dot').className = `dot ${app.status === 'connected' ? 'connected' : app.status === 'idle' || app.status === 'connecting' ? '' : 'error'}`;
     $('deviceName').textContent = deviceLabel(app.pairing);
@@ -189,7 +198,10 @@
     $('unpairedTitle').textContent = app.pairing ? '添加一台 Chromebook' : '还没有配对';
     $('closeHelp').hidden = !app.pairing;
     document.querySelectorAll('button[data-cmd]').forEach((b) => {
-      b.disabled = app.status !== 'connected' || (b.classList.contains('needs-video') && !videoAvailable());
+      b.disabled =
+        app.status !== 'connected' ||
+        (b.classList.contains('needs-video') && !videoAvailable()) ||
+        (b.classList.contains('needs-playlist') && !playlistAllows(b));
     });
   };
 
@@ -215,6 +227,7 @@
   const render = () => {
     renderStatus();
     renderVideo();
+    renderPlaylist();
     renderBookmarkBtn();
     renderOffline();
     renderSwitcher();
@@ -272,6 +285,7 @@
     app.video = state.hasVideo ? state : { hasVideo: false };
     app.videoTs = Date.now();
     app.title = state.title || app.title;
+    app.playlist = state.playlist || null;
     app.url = state.url || app.url;
     // New page on the TV: refresh the library once so the ★ reflects this page.
     const key = entryKey(app.url);
@@ -387,6 +401,8 @@
     });
   };
 
+  const SLOW_CMDS = Object.freeze([CMD.PLAYLIST_GET, CMD.PLAYLIST_OPEN, CMD.PLAYLIST_STEP]);
+
   /** Send a command; resolves with the reply (or a synthetic TIMEOUT reply). Never rejects. */
   const send = (cmd, args = {}) => {
     if (app.status !== 'connected' || !app.conn || !app.conn.open) return Promise.resolve({ ok: false, error_code: 'OFFLINE' });
@@ -398,7 +414,7 @@
         app.pending.delete(msg.cmd_id);
         log.warn('cmd.timeout', { cmd, cmd_id: msg.cmd_id });
         resolve({ ok: false, error_code: ERR.TIMEOUT });
-      }, ACK_TIMEOUT_MS);
+      }, SLOW_CMDS.includes(cmd) ? SLOW_ACK_TIMEOUT_MS : ACK_TIMEOUT_MS);
       app.pending.set(msg.cmd_id, { resolve, timer, sentAt: Date.now() });
     });
   };
@@ -553,6 +569,108 @@
   };
 
   // -------------------------------------------------------------------------
+  // Episode list (design 3.11, option C): entry row + previous / next from the pushed summary,
+  // full list in a bottom sheet fetched on open. The phone keeps no copy beyond the open sheet.
+  // -------------------------------------------------------------------------
+  const playlistInfoText = (pl) => {
+    const extra = pl.specials ? ` + ${pl.specials} 个特别篇` : '';
+    if (!pl.current) return `共 ${pl.total} 集${extra}`;
+    return pl.currentSpecial ? `特别篇:${pl.current} · 共 ${pl.total} 集` : `第 ${pl.current} 集 / 共 ${pl.total} 集${extra}`;
+  };
+
+  const renderPlaylist = () => {
+    const pl = app.status === 'connected' ? app.playlist : null;
+    $('playlistRow').hidden = !pl;
+    if (pl) $('playlistInfo').textContent = playlistInfoText(pl);
+    renderPlaylistSheet();
+  };
+
+  const episodeChip = (ep, current, viewRange) => {
+    const b = el('button', `pl-chip${current ? ' current' : ''}`, ep.label);
+    if (current) b.setAttribute('aria-current', 'true');
+    b.setAttribute('aria-label', `第 ${ep.label} 集`);
+    b.addEventListener('click', () => openEpisodeFromSheet(ep, viewRange));
+    return b;
+  };
+
+  const specialRow = (sp, current, viewRange) => {
+    const b = el('button', `pl-special${current ? ' current' : ''}`, sp.label);
+    b.append(el('small', null, sp.after ? `在 ${sp.after} 之后` : '在最前面'));
+    b.addEventListener('click', () => openEpisodeFromSheet(sp, viewRange));
+    return b;
+  };
+
+  const renderPlaylistSheet = () => {
+    const sheet = app.plSheet;
+    $('playlistSheet').hidden = !sheet;
+    if (!sheet) return;
+    const d = sheet.data;
+    const currentId = d && d.current ? d.current.id : null;
+    $('plTitle').textContent = d && d.title ? `选集 · ${d.title}` : '选集';
+    $('plSub').textContent = d ? `${d.current ? (d.current.special ? `正在播放特别篇:${d.current.label}` : `正在播放第 ${d.current.label} 集`) : '没有正在播放的一集'} · 点一集在电视上播放` : '';
+    $('plStatus').hidden = !sheet.loading && !sheet.error;
+    $('plStatus').textContent = sheet.loading ? '正在读取选集…' : sheet.error || '';
+    const ranges = d ? d.ranges : [];
+    $('plRanges').hidden = ranges.length < 2;
+    $('plRanges').replaceChildren(
+      ...ranges.map((r) => {
+        const b = el('button', r.index === d.viewRange ? 'active' : '', r.label);
+        b.setAttribute('role', 'tab');
+        b.setAttribute('aria-selected', String(r.index === d.viewRange));
+        b.addEventListener('click', () => loadPlaylist(r.index));
+        return b;
+      })
+    );
+    const eps = d && !sheet.loading ? d.episodes : [];
+    const sps = d && !sheet.loading ? d.specials : [];
+    $('plEpisodesHead').hidden = eps.length === 0;
+    $('plEpisodesHead').textContent = `正片 ${eps.length} 集`;
+    $('plGrid').replaceChildren(...eps.map((ep) => episodeChip(ep, ep.id === currentId, d.viewRange)));
+    $('plSpecialsHead').hidden = sps.length === 0;
+    $('plSpecialsHead').textContent = `特别篇 ${sps.length}`;
+    $('plSpecials').replaceChildren(...sps.map((sp) => specialRow(sp, sp.id === currentId, d.viewRange)));
+  };
+
+  /** Fetch the list (optionally another range); keeps the previous data visible while loading. */
+  const loadPlaylist = async (range) => {
+    if (!app.plSheet) return;
+    app.plSheet = { ...app.plSheet, loading: true, error: null };
+    renderPlaylistSheet();
+    const res = await send(CMD.PLAYLIST_GET, range === undefined ? {} : { range });
+    if (!app.plSheet) return; // closed meanwhile
+    app.plSheet = res.ok
+      ? { loading: false, data: res.data, error: null }
+      : { ...app.plSheet, loading: false, error: ERROR_TEXT[res.error_code] || `读取失败:${res.error_code}` };
+    log.info('ui.playlist_loaded', { ok: res.ok, error_code: res.error_code, range, count: res.ok ? res.data.episodes.length : 0 });
+    renderPlaylistSheet();
+  };
+
+  const openPlaylistSheet = () => {
+    log.info('ui.playlist_sheet', { action: 'open', current: app.playlist && app.playlist.current });
+    app.plSheet = { loading: true, data: null, error: null };
+    loadPlaylist();
+  };
+
+  const closePlaylistSheet = (reason) => {
+    if (!app.plSheet) return;
+    log.info('ui.playlist_sheet', { action: 'close', reason });
+    app.plSheet = null;
+    renderPlaylistSheet();
+  };
+
+  const openEpisodeFromSheet = async (item, viewRange) => {
+    log.info('ui.playlist_pick', { id: item.id, label: item.label, range: viewRange });
+    const args = { id: item.id, ...(item.href && item.href.startsWith('/') && !item.href.startsWith('//') ? { href: item.href } : {}) };
+    const res = await act(CMD.PLAYLIST_OPEN, viewRange >= 0 ? { ...args, range: viewRange } : args);
+    if (!res.ok) return;
+    closePlaylistSheet('picked');
+    toast(`正在打开 ${isEpisodeLabel(item.label) ? `第 ${item.label} 集` : item.label}`, 'ok');
+  };
+
+  // Same rule as CRPlay.isEpisodeLabel in the extension (the phone does not load lib/playlist.js).
+  const isEpisodeLabel = (label) => /^\d+$/.test(String(label || '').trim());
+
+  // -------------------------------------------------------------------------
   // Devices: switcher, online probes, offline screen
   // -------------------------------------------------------------------------
   /** Is another Chromebook online? Opens (then closes) a data connection on the current peer. */
@@ -674,6 +792,9 @@
   // Input: buttons
   // -------------------------------------------------------------------------
   const BUTTON_HOOKS = Object.freeze({
+    [CMD.PLAYLIST_STEP]: (res) => {
+      if (res.ok && res.data && res.data.label) toast(`正在打开第 ${res.data.label} 集`, 'ok');
+    },
     [CMD.BACK]: () => switchTab('browse'), // returning to a list means browsing again
     [CMD.FULLSCREEN]: (res) => {
       if (res.ok && res.data) $('fullscreen').textContent = res.data.fullscreen ? '⛶ 退出全屏' : '⛶ 全屏';
@@ -682,7 +803,7 @@
 
   const onButton = async (btn) => {
     const cmd = btn.dataset.cmd;
-    const args = btn.dataset.seconds ? { seconds: Number(btn.dataset.seconds) } : {};
+    const args = btn.dataset.seconds ? { seconds: Number(btn.dataset.seconds) } : btn.dataset.dir ? { dir: Number(btn.dataset.dir) } : {};
     if (navigator.vibrate) navigator.vibrate(10);
     const res = await act(cmd, args);
     const hook = BUTTON_HOOKS[cmd];
@@ -699,6 +820,11 @@
     })
   );
   $('bookmarkBtn').addEventListener('click', toggleBookmark);
+  $('playlistRow').addEventListener('click', openPlaylistSheet);
+  $('plClose').addEventListener('click', () => closePlaylistSheet('close_button'));
+  $('playlistSheet').addEventListener('click', (e) => {
+    if (e.target === $('playlistSheet')) closePlaylistSheet('backdrop');
+  });
   $('deviceChip').addEventListener('click', () => {
     app.switcherOpen = !app.switcherOpen;
     if (app.switcherOpen) probeOthers();

@@ -31,6 +31,10 @@
     SCROLL: 'scroll',
     PAGE_UP: 'pageUp',
     PAGE_DOWN: 'pageDown',
+    // Episode list (content script, top frame only; design 3.11)
+    PLAYLIST_GET: 'playlistGet',
+    PLAYLIST_OPEN: 'playlistOpen',
+    PLAYLIST_STEP: 'playlistStep',
     // Video-level (content script, whichever frame owns the <video>)
     PLAY_PAUSE: 'playPause',
     SEEK_BY: 'seekBy',
@@ -44,7 +48,10 @@
     CMD.BACK, CMD.FORWARD, CMD.RELOAD, CMD.HOME, CMD.FULLSCREEN, CMD.PING,
     CMD.LIBRARY_LIST, CMD.BOOKMARK_ADD, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE, CMD.OPEN_ENTRY,
   ]);
-  const PAGE_CMDS = Object.freeze([CMD.MOVE, CMD.CLICK, CMD.SCROLL, CMD.PAGE_UP, CMD.PAGE_DOWN]);
+  const PAGE_CMDS = Object.freeze([
+    CMD.MOVE, CMD.CLICK, CMD.SCROLL, CMD.PAGE_UP, CMD.PAGE_DOWN,
+    CMD.PLAYLIST_GET, CMD.PLAYLIST_OPEN, CMD.PLAYLIST_STEP,
+  ]);
   const VIDEO_CMDS = Object.freeze([CMD.PLAY_PAUSE, CMD.SEEK_BY, CMD.SEEK_TO, CMD.VOLUME]);
   // High-frequency input that is fire-and-forget (no ack) to avoid flooding the channel.
   const FIRE_AND_FORGET = Object.freeze([CMD.MOVE, CMD.SCROLL]);
@@ -68,6 +75,8 @@
     NO_HISTORY: 'NO_HISTORY', // back/forward had nothing to go to: we stayed on the current page
     SYNC_FAILED: 'SYNC_FAILED', // chrome.storage.sync write refused (quota / offline sync service)
     AUTOPLAY_BLOCKED: 'AUTOPLAY_BLOCKED', // unmuted play() refused without a real gesture; played muted instead
+    NO_PLAYLIST: 'NO_PLAYLIST', // this page has no episode list (or the site is not supported)
+    NO_EPISODE: 'NO_EPISODE', // no previous / next numbered episode
     PEER_UNAVAILABLE: 'PEER_UNAVAILABLE',
     TIMEOUT: 'TIMEOUT',
     INTERNAL: 'INTERNAL',
@@ -131,6 +140,15 @@
     [CMD.VOLUME]: (a) => (isFiniteNumber(a.level) && a.level >= 0 && a.level <= 1 ? null : ERR.BAD_MESSAGE),
     [CMD.BOOKMARK_REMOVE]: (a) => (typeof a.key === 'string' && a.key.length > 0 ? null : ERR.BAD_MESSAGE),
     [CMD.RECENT_REMOVE]: (a) => (typeof a.key === 'string' && a.key.length > 0 ? null : ERR.BAD_MESSAGE),
+    [CMD.PLAYLIST_GET]: (a) => (a.range === undefined || (Number.isInteger(a.range) && a.range >= 0) ? null : ERR.BAD_MESSAGE),
+    // href is optional and same-site only (a path, never a protocol-relative or absolute URL).
+    [CMD.PLAYLIST_OPEN]: (a) =>
+      typeof a.id === 'string' && a.id.length > 0 &&
+      (a.href === undefined || (typeof a.href === 'string' && /^\/(?!\/)/.test(a.href))) &&
+      (a.range === undefined || (Number.isInteger(a.range) && a.range >= 0))
+        ? null
+        : ERR.BAD_MESSAGE,
+    [CMD.PLAYLIST_STEP]: (a) => (a.dir === 1 || a.dir === -1 ? null : ERR.BAD_MESSAGE),
     // Only http(s) pages may be opened from the phone; time (resume position) is optional.
     [CMD.OPEN_ENTRY]: (a) =>
       typeof a.url === 'string' && /^https?:\/\//i.test(a.url) && (a.time === undefined || (isFiniteNumber(a.time) && a.time >= 0))

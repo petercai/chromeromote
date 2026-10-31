@@ -180,7 +180,7 @@ const resolveTab = async (cmd) => {
 const injectContentScripts = (tabId) =>
   chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
-    files: ['lib/protocol.js', 'lib/log.js', 'content.js'],
+    files: ['lib/protocol.js', 'lib/log.js', 'lib/playlist.js', 'content.js'],
   });
 
 const isNoReceiver = (e) => /Receiving end does not exist|Could not establish connection/i.test(String(e && e.message));
@@ -251,6 +251,7 @@ const toggleFullscreen = async (tab) => {
 // ---------------------------------------------------------------------------
 const RECENT_WRITE_INTERVAL_MS = 10000;
 const lastVideoByTab = new Map(); // tabId -> latest video state (for bookmarking "where I am")
+const lastPlaylistByTab = new Map(); // tabId -> latest episode-list summary from the top frame (design 3.11)
 const lastRecentWrite = new Map(); // entry key -> ts of last write (throttle, sync write quota)
 
 const syncStore = chrome.storage.sync;
@@ -421,7 +422,7 @@ const executeCommand = async (msg, clientId) => {
 const forwardVideoState = async (state, sender) => {
   const tab = await getTargetTab();
   if (!tab || !sender.tab || sender.tab.id !== tab.id) return;
-  sendToOffscreen({ type: 'state', state: { ...state, title: tab.title || '', url: tab.url || '', ts: Date.now() } });
+  sendToOffscreen({ type: 'state', state: { ...state, title: tab.title || '', url: tab.url || '', playlist: lastPlaylistByTab.get(tab.id) || null, ts: Date.now() } });
   // Library side effects never block or break state forwarding.
   lastVideoByTab.set(tab.id, state);
   recordRecent(tab, state).catch((e) => log.warn('library.recent_failed', { error: String(e) }));
@@ -590,6 +591,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     forwardVideoState(message.state, sender);
     return false;
   }
+  // Episode-list summary: sent by the top frame only when it changes; merged into the next video state.
+  if (message && message.type === 'playlistState' && sender.tab) {
+    const s = message.summary;
+    log.debug('playlist.state', { tab_id: sender.tab.id, current: s && s.current, total: s && s.total });
+    if (s) lastPlaylistByTab.set(sender.tab.id, s);
+    else lastPlaylistByTab.delete(sender.tab.id);
+    return false;
+  }
   if (!message || message.target !== 'bg') return false;
   const handler = BG_HANDLERS[message.type];
   if (!handler) {
@@ -635,7 +644,10 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 });
 chrome.tabs.onActivated.addListener(() => announceNoVideo());
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === 'loading') announceNoVideo();
+  if (info.status === 'loading') {
+    lastPlaylistByTab.delete(tabId); // the new page's content script pushes its own summary
+    announceNoVideo();
+  }
 });
 
 // Any wake-up of the worker re-checks the offscreen document (cheap, idempotent).

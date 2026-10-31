@@ -193,7 +193,137 @@
     return ok();
   };
 
+  // -------------------------------------------------------------------------
+  // Episode list (design 3.11, option C). Top frame only; selectors come from the site adapter
+  // table in lib/playlist.js, all list logic is pure there (CRPlay).
+  // -------------------------------------------------------------------------
+  const RANGE_SWITCH_TIMEOUT_MS = 2500;
+  const RANGE_POLL_MS = 100;
+  const adapter = isTop ? CRPlay.adapterFor(location.hostname) : null;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const itemLinks = () => [...document.querySelectorAll(adapter.item)];
+  const linkId = (a) => CRPlay.itemId(a.getAttribute('href'), adapter.idParam);
+  const rangeButtons = () => [...document.querySelectorAll(adapter.rangeButton)];
+  const listSignature = () => itemLinks().map((a) => a.getAttribute('href')).join('|');
+
+  const readPlaylist = () => {
+    const items = itemLinks().map((a) => ({ label: a.textContent.trim(), id: linkId(a), href: a.getAttribute('href') }));
+    const ranges = CRPlay.buildRanges(
+      rangeButtons().map((b) => ({ label: b.textContent, active: b.classList.contains('active'), playing: b.classList.contains('playing') }))
+    );
+    const heading = document.querySelector(adapter.title);
+    const currentId = new URL(location.href).searchParams.get(adapter.idParam);
+    return { items, ranges, title: heading ? heading.textContent.trim() : document.title, p: CRPlay.parsePlaylist(items, currentId) };
+  };
+
+  /** Show another range (the site renders one at a time); resolves true once the list has changed. */
+  const switchRange = async (index) => {
+    const btn = rangeButtons()[index];
+    if (!btn) return false;
+    if (btn.classList.contains('active')) return true;
+    const before = listSignature();
+    const started = Date.now();
+    btn.click();
+    while (Date.now() - started < RANGE_SWITCH_TIMEOUT_MS) {
+      await sleep(RANGE_POLL_MS);
+      if (listSignature() !== before) {
+        log.debug('playlist.range_switched', { index, latency_ms: Date.now() - started });
+        return true;
+      }
+    }
+    log.warn('playlist.range_timeout', { index, timeout_ms: RANGE_SWITCH_TIMEOUT_MS });
+    return false;
+  };
+
+  /** Click the episode link (keeps the site's SPA navigation and player); same-site href as fallback. */
+  const openEpisode = async ({ id, href, range }, via) => {
+    const find = () => itemLinks().find((a) => linkId(a) === id);
+    let link = find();
+    if (!link && range !== undefined && (await switchRange(range))) link = find();
+    if (link) {
+      const label = link.textContent.trim();
+      link.click();
+      log.info('playlist.open', { id, label, via, method: 'click', ok: true });
+      return ok({ label });
+    }
+    if (href) {
+      log.info('playlist.open', { id, via, method: 'navigate', ok: true });
+      location.assign(href);
+      return ok({ label: null });
+    }
+    log.warn('playlist.open', { id, via, method: 'none', ok: false });
+    return fail(ERR.NO_TARGET);
+  };
+
+  const playlistGet = async ({ range }) => {
+    const started = Date.now();
+    const shown = readPlaylist();
+    if (shown.items.length === 0) {
+      log.warn('playlist.not_found', { site: adapter.site, selector: adapter.item });
+      return fail(ERR.NO_PLAYLIST);
+    }
+    const wantOther = range !== undefined && Boolean(shown.ranges[range]) && !shown.ranges[range].active;
+    if (wantOther && !(await switchRange(range))) return fail(ERR.TIMEOUT);
+    const view = wantOther ? readPlaylist() : shown;
+    // Put the TV page back on the range it showed, so its own list (and our summary) stays put.
+    const back = shown.ranges.findIndex((r) => r.active);
+    if (wantOther && back >= 0) await switchRange(back);
+    const viewRange = wantOther ? range : back;
+    log.info('playlist.read', {
+      site: adapter.site,
+      count: view.p.episodes.length,
+      specials: view.p.specials.length,
+      ranges: shown.ranges.length,
+      view_range: viewRange,
+      current_label: shown.p.current && shown.p.current.label,
+      latency_ms: Date.now() - started,
+    });
+    return ok({
+      title: shown.title,
+      total: CRPlay.totalEpisodes(shown.p, shown.ranges),
+      current: shown.p.current,
+      episodes: view.p.episodes,
+      specials: view.p.specials,
+      ranges: shown.ranges,
+      viewRange,
+    });
+  };
+
+  // Previous / next numbered episode (Q35: specials are skipped); crosses into the adjacent range.
+  const playlistStep = async ({ dir }) => {
+    const shown = readPlaylist();
+    if (shown.items.length === 0) return fail(ERR.NO_PLAYLIST);
+    const plan = CRPlay.stepPlan(shown.p, shown.ranges, dir);
+    const via = dir < 0 ? 'prev' : 'next';
+    log.info('playlist.step', { dir, plan: plan.kind, from: shown.p.current && shown.p.current.label });
+    if (plan.kind === 'none') return fail(ERR.NO_EPISODE);
+    if (plan.kind === 'episode') return openEpisode(plan.target, via);
+    if (!(await switchRange(plan.rangeIndex))) return fail(ERR.TIMEOUT);
+    const eps = readPlaylist().p.episodes;
+    const target = plan.pick === 'last' ? eps[eps.length - 1] : eps[0];
+    return target ? openEpisode(target, via) : fail(ERR.NO_EPISODE);
+  };
+
+  const withAdapter = (fn) => (a) => (adapter ? fn(a) : fail(ERR.NO_PLAYLIST));
+
+  // Summary for the phone's entry row and previous / next buttons; sent only when it changes.
+  let lastPlaylistSig = null;
+  const pushPlaylistSummary = () => {
+    if (!adapter) return;
+    const { items, p, ranges, title } = readPlaylist();
+    const summary = items.length ? CRPlay.summarize(p, ranges, title) : null;
+    const sig = JSON.stringify(summary);
+    if (sig === lastPlaylistSig) return;
+    lastPlaylistSig = sig;
+    log.debug('playlist.summary', { current: summary && summary.current, total: summary && summary.total, has_prev: summary && summary.hasPrev, has_next: summary && summary.hasNext });
+    chrome.runtime.sendMessage({ type: 'playlistState', summary }).catch(() => {});
+  };
+
   const PAGE_ACTIONS = Object.freeze({
+    [CMD.PLAYLIST_GET]: withAdapter(playlistGet),
+    [CMD.PLAYLIST_OPEN]: withAdapter((a) => openEpisode(a, 'list')),
+    [CMD.PLAYLIST_STEP]: withAdapter(playlistStep),
     [CMD.MOVE]: (a) => movePointer(a),
     [CMD.CLICK]: () => clickAtPointer(),
     [CMD.SCROLL]: (a) => scrollBy(a.dy),
@@ -250,8 +380,15 @@
     const kind = executorOf(msg.cmd);
     if (kind === 'page') {
       if (!isTop) return false;
-      sendResponse(PAGE_ACTIONS[msg.cmd](msg.args || {}));
-      return false;
+      // Some page actions are async (episode list); the sync ones resolve immediately.
+      Promise.resolve()
+        .then(() => PAGE_ACTIONS[msg.cmd](msg.args || {}))
+        .then(sendResponse)
+        .catch((e) => {
+          log.error('page.cmd_failed', { cmd: msg.cmd, error: String(e) });
+          sendResponse(fail(ERR.INTERNAL));
+        });
+      return true;
     }
     if (kind === 'video') {
       const v = findVideo();
@@ -291,10 +428,11 @@
   // -------------------------------------------------------------------------
   let hadVideo = false;
   const stateTimer = setInterval(() => {
-    const v = findVideo();
-    if (!v && !hadVideo) return;
-    hadVideo = Boolean(v);
     try {
+      pushPlaylistSummary();
+      const v = findVideo();
+      if (!v && !hadVideo) return;
+      hadVideo = Boolean(v);
       chrome.runtime.sendMessage({ type: 'videoState', state: v ? snapshot(v) : { hasVideo: false } }).catch(() => {});
     } catch (e) {
       // Extension was reloaded: this orphaned script must stop.
