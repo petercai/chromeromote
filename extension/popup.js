@@ -46,6 +46,18 @@
     el.textContent = '还没有设置遥控网页地址,二维码暂不显示';
   };
 
+  // Human-readable reason for an unreachable remote page (most often: Pages not deployed yet).
+  const remoteWarnText = (check) =>
+    check.status === 404
+      ? '遥控网页地址打不开(HTTP 404),扫码后手机也会显示 404。请确认:① 代码已推送到 GitHub;② 仓库 Settings → Pages 已开启(分支 main,目录 / root);③ 地址里的用户名和仓库名拼写正确。刚推送时要等几分钟。'
+      : `遥控网页地址打不开(${check.status ? 'HTTP ' + check.status : check.error || '网络错误'})。请检查网络或地址拼写。`;
+
+  const renderRemoteCheck = (check) => {
+    const bad = Boolean(check && !check.ok);
+    $('remoteWarn').hidden = !bad;
+    if (bad) $('remoteWarnText').textContent = remoteWarnText(check);
+  };
+
   let lastPairUrl = '';
 
   const render = async () => {
@@ -58,12 +70,19 @@
     $('baseWarn').hidden = !placeholder;
     $('copyUrl').disabled = placeholder;
     $('pairUrl').textContent = placeholder ? '(未设置)' : info.pairUrl;
+    renderRemoteCheck(info.remoteCheck);
     // Re-render only when the link changes (the popup refreshes status every 2 s).
     if (info.pairUrl === lastPairUrl) return;
     lastPairUrl = info.pairUrl;
     if (placeholder) return renderNoQr();
     renderQr(info.pairUrl);
   };
+
+  $('recheck').addEventListener('click', async () => {
+    $('recheck').textContent = '检查中…';
+    renderRemoteCheck(await bg('recheckRemote'));
+    $('recheck').textContent = '重新检查';
+  });
 
   $('copyUrl').addEventListener('click', async () => {
     await navigator.clipboard.writeText(lastPairUrl);

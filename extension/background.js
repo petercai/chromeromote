@@ -237,15 +237,42 @@ const announceNoVideo = async () => {
 };
 
 // ---------------------------------------------------------------------------
+// Remote page reachability: catch "GitHub Pages not deployed / wrong repo name" (HTTP 404)
+// before the user scans the QR code. Cached briefly because the popup polls every 2 s.
+// ---------------------------------------------------------------------------
+const REMOTE_CHECK_TTL_MS = 60000;
+const REMOTE_CHECK_TIMEOUT_MS = 8000;
+let remoteCheckCache = { url: null, at: 0, result: null };
+
+const checkRemoteUrl = async (url, { force = false } = {}) => {
+  const fresh = remoteCheckCache.url === url && Date.now() - remoteCheckCache.at < REMOTE_CHECK_TTL_MS;
+  if (fresh && !force) return remoteCheckCache.result;
+  let result;
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(REMOTE_CHECK_TIMEOUT_MS) });
+    result = { ok: res.ok, status: res.status, checkedAt: Date.now() };
+  } catch (e) {
+    result = { ok: false, status: 0, error: String(e && e.name), checkedAt: Date.now() };
+  }
+  remoteCheckCache = { url, at: Date.now(), result };
+  log[result.ok ? 'info' : 'warn']('remote_url.check', { url, ok: result.ok, http_status: result.status, error: result.error });
+  return result;
+};
+
+// ---------------------------------------------------------------------------
 // Popup API
 // ---------------------------------------------------------------------------
+const isPlaceholderUrl = (url) => url.includes('YOUR_GITHUB_USER');
+
 const getPopupStatus = async () => {
   const config = await loadConfig();
   const { status = null, logs = [] } = await chrome.storage.session.get(['status', 'logs']);
+  const remoteCheck = isPlaceholderUrl(config.remoteBaseUrl) ? null : await checkRemoteUrl(config.remoteBaseUrl);
   return {
     status,
     peerId: config.peerId,
     remoteBaseUrl: config.remoteBaseUrl,
+    remoteCheck,
     pairUrl: buildPairUrl({ baseUrl: config.remoteBaseUrl, peerId: config.peerId, key: config.key }),
     logCount: logs.length,
   };
@@ -263,14 +290,21 @@ const BG_HANDLERS = Object.freeze({
     return Promise.resolve(true);
   },
   getStatus: () => getPopupStatus(),
+  recheckRemote: async () => {
+    const { remoteBaseUrl } = await loadConfig();
+    return checkRemoteUrl(remoteBaseUrl, { force: true });
+  },
   getLogs: async () => (await chrome.storage.session.get('logs')).logs || [],
   clearLogs: () => chrome.storage.session.set({ logs: [] }).then(() => true),
   setBaseUrl: async ({ remoteBaseUrl }) => {
     const url = String(remoteBaseUrl || '').trim();
     if (!/^https:\/\//i.test(url)) return { ok: false, error: 'URL must start with https://' };
-    await updateConfig({ remoteBaseUrl: url.endsWith('/') ? url : `${url}/` });
-    log.info('config.base_url_changed', { remote_base_url: url });
-    return { ok: true };
+    const normalized = url.endsWith('/') ? url : `${url}/`;
+    await updateConfig({ remoteBaseUrl: normalized });
+    log.info('config.base_url_changed', { remote_base_url: normalized });
+    // Check immediately so the popup can warn right after saving.
+    const check = await checkRemoteUrl(normalized, { force: true });
+    return { ok: true, check };
   },
   regenerateKey: async () => {
     await updateConfig({ key: newKey() });

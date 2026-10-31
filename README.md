@@ -28,6 +28,13 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
    - Open the repository's *Settings → Pages → Deploy from a branch*, then choose `main` / `/ (root)`.
    - The remote page will be at `https://petercai.github.io/chromeromote/remote/`.
    - The page loads `../extension/lib/*.js`, so the whole repository root must be published.
+     The `.nojekyll` file makes Pages serve files as they are, without Jekyll processing.
+   - **Wait for the deployment to finish.** After each push, Pages needs a few minutes (watch the
+     repository's *Actions* tab until "pages build and deployment" turns green), and its CDN caches
+     pages for up to 10 minutes. Until then the address returns **404** or an old version.
+   - **Before scanning, open the address in a desktop browser** and make sure you see the
+     "还没有配对" (not paired yet) page, not a GitHub 404. The extension popup checks this too: if the
+     address doesn't load, it shows a red warning with the HTTP status code.
 2. **Install the extension on the Chromebook**
    - Open `chrome://extensions` and turn on *Developer mode*.
    - Click *Load unpacked* and select the `extension/` folder.
@@ -78,6 +85,7 @@ phone you want to keep.
 |---------|---------------|
 | Phone shows "电视端不在线" (TV is offline) | Is Chrome running? Is the extension badge `!`? Open the popup and check the status and the logs |
 | Phone shows "配对失效" (pairing invalid) | The key was regenerated. Scan the QR code again |
+| Phone shows a GitHub **404** after scanning / the popup shows a red "地址打不开" (address won't load) warning | GitHub Pages isn't published at that address yet. ① Is the code pushed? ② Under *Settings → Pages*, is the source `main` / `/ (root)`? ③ Are the user and repository names in the address spelled correctly? (The address is case-sensitive, and `chrome-remote` and `chromeromote` are different.) ④ After a push, wait a few minutes, then click *重新检查* (Check again) in the popup |
 | Phone shows "还没有配对" (not paired yet) | You opened the page address directly, or the link opened outside Chrome. Follow setup step 4 and make sure it opens in Chrome |
 | Toast says "页面上没有找到视频" (`NO_VIDEO`) | The active tab has no `<video>`, or the player has not loaded yet |
 | Toast says "暂不支持点击嵌入框架内的内容" (`CLICK_IFRAME`) | The element under the pointer is inside an iframe, which v1 can't click (see the known limits in the implementation notes) |
@@ -95,6 +103,8 @@ npm install          # installs playwright-core (e2e only)
 npm test             # protocol unit tests
 # End-to-end: needs a Chromium build (branded Chrome ignores --load-extension) and internet for 0.peerjs.com
 CHROMIUM_PATH=/path/to/chromium/chrome npm run e2e
+# Same test, but the "phone" opens the published GitHub Pages page (checks the deployment)
+CHROMIUM_PATH=/path/to/chromium/chrome REMOTE_BASE=https://<user>.github.io/<repo>/remote/ npm run e2e
 ```
 
 Third-party code in `extension/vendor/`:
