@@ -1,11 +1,12 @@
 {
   "name": "chrome-remote",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Android phone remote for Chrome on Chromebook: MV3 extension + WebRTC (PeerJS) + PWA.",
   "scripts": {
     "test": "node --test tests/protocol.test.js",
-    "e2e": "node tests/e2e/run.mjs"
+    "e2e": "node tests/e2e/run.mjs",
+    "bump": "node scripts/bump-version.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.50.0"

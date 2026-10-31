@@ -39,6 +39,7 @@ body { display: flex; flex-direction: column; padding-bottom: env(safe-area-inse
 .dot.connected { background: var(--ok); }
 .dot.error { background: var(--danger); }
 .site { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.ver { font-size: 11px; flex: none; }
 
 main { flex: 1; min-height: 0; position: relative; }
 .tab { position: absolute; inset: 0; display: none; flex-direction: column; gap: var(--gap); padding: var(--gap); }

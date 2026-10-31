@@ -120,9 +120,26 @@
     return ok();
   };
 
-  /** Build the phone pairing URL; secrets travel in the hash so they never reach a server log. */
-  const buildPairUrl = ({ baseUrl, peerId, key }) =>
-    `${baseUrl.replace(/#.*$/, '')}#peer=${encodeURIComponent(peerId)}&key=${encodeURIComponent(key)}`;
+  /**
+   * Build the phone pairing URL. Secrets travel in the hash so they never reach a server log.
+   * The optional `nonce` goes into `?t=` (not secret): it makes every scanned link unique, so the
+   * phone always performs a real page load instead of a same-document hash jump onto a stale tab.
+   */
+  const buildPairUrl = ({ baseUrl, peerId, key, nonce = '' }) => {
+    const base = baseUrl.replace(/[?#].*$/, '');
+    const query = nonce ? `?t=${encodeURIComponent(nonce)}` : '';
+    return `${base}${query}#peer=${encodeURIComponent(peerId)}&key=${encodeURIComponent(key)}`;
+  };
+
+  /**
+   * Repair a pairing URL whose `#` was percent-encoded by a scanner app (`/remote/%23peer=…`),
+   * which GitHub Pages answers with 404. Returns the fixed URL, or null when there is nothing to fix.
+   */
+  const repairPairUrl = (url) => {
+    const m = String(url || '').match(/^(.*?)%23(peer=.*)$/i);
+    if (!m) return null;
+    return `${m[1]}#${m[2]}`;
+  };
 
   /** Parse `#peer=..&key=..` from a URL hash; returns null when incomplete. */
   const parsePairHash = (hash) => {
@@ -160,6 +177,7 @@
     fail,
     validateCmd,
     buildPairUrl,
+    repairPairUrl,
     parsePairHash,
     formatTime,
   });

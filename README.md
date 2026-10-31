@@ -86,6 +86,7 @@ phone you want to keep.
 | Phone shows "电视端不在线" (TV is offline) | Is Chrome running? Is the extension badge `!`? Open the popup and check the status and the logs |
 | Phone shows "配对失效" (pairing invalid) | The key was regenerated. Scan the QR code again |
 | Phone shows a GitHub **404** after scanning / the popup shows a red "地址打不开" (address won't load) warning | GitHub Pages isn't published at that address yet. ① Is the code pushed? ② Under *Settings → Pages*, is the source `main` / `/ (root)`? ③ Are the user and repository names in the address spelled correctly? (The address is case-sensitive, and `chrome-remote` and `chromeromote` are different.) ④ After a push, wait a few minutes, then click *重新检查* (Check again) in the popup |
+| `…/remote/` works, but the `#peer=…` link from the QR code shows 404 | Fixed in 1.0.3. ① Pairing links now include a random `?t=…` value, so the phone always loads the page again instead of reusing an old 404 tab. ② If a scanner app turns `#` into `%23`, the site's `404.html` and the remote page repair the link automatically. Make sure the phone's status bar shows 1.0.3 or later |
 | Phone shows "还没有配对" (not paired yet) | You opened the page address directly, or the link opened outside Chrome. Follow setup step 4 and make sure it opens in Chrome |
 | Toast says "页面上没有找到视频" (`NO_VIDEO`) | The active tab has no `<video>`, or the player has not loaded yet |
 | Toast says "暂不支持点击嵌入框架内的内容" (`CLICK_IFRAME`) | The element under the pointer is inside an iframe, which v1 can't click (see the known limits in the implementation notes) |
@@ -95,6 +96,23 @@ phone you want to keep.
   lines. Every command carries a `cmd_id`, which you can match against the phone page's DevTools
   console.
 - **Rollback**: disable or remove the extension. Nothing else on the Chromebook is changed.
+
+## Version number: is GitHub serving my latest code?
+
+- The version (for example `1.0.3`) is defined in exactly one place:
+  [extension/lib/version.js](extension/lib/version.js).
+- **Run `npm run bump` after every code change.** It updates `version.js`, `extension/manifest.json`
+  and the `?v=` cache-busting parameter on every file in `remote/index.html` in one go. A unit test
+  fails if these three ever disagree.
+- Where the version shows up:
+  - **Phone page:** right end of the top status bar (`v1.0.3`), and on the "还没有配对" (not paired
+    yet) screen.
+  - **Extension popup:** `扩展版本 X · 线上网页版本 Y` (extension version X · live page version Y).
+    The popup reads the deployed `extension/lib/version.js` from GitHub Pages. If it differs from the
+    extension's version, the popup shows a red warning: GitHub Pages hasn't updated yet.
+  - **The site's 404 page.**
+- After pushing, wait until the popup shows matching versions, or until the phone's status bar shows
+  the new version, before testing on the phone.
 
 ## Development and tests
 

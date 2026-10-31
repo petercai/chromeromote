@@ -52,16 +52,26 @@
       ? '遥控网页地址打不开(HTTP 404),扫码后手机也会显示 404。请确认:① 代码已推送到 GitHub;② 仓库 Settings → Pages 已开启(分支 main,目录 / root);③ 地址里的用户名和仓库名拼写正确。刚推送时要等几分钟。'
       : `遥控网页地址打不开(${check.status ? 'HTTP ' + check.status : check.error || '网络错误'})。请检查网络或地址拼写。`;
 
+  const versionMismatchText = (check) =>
+    `线上遥控网页的版本是 ${check.remoteVersion || '未知(旧版本没有版本号)'},扩展的版本是 ${check.localVersion}。GitHub Pages 还没有更新到最新代码:请推送代码,等几分钟后点"重新检查"。`;
+
   const renderRemoteCheck = (check) => {
-    const bad = Boolean(check && !check.ok);
-    $('remoteWarn').hidden = !bad;
-    if (bad) $('remoteWarnText').textContent = remoteWarnText(check);
+    const unreachable = Boolean(check && !check.ok);
+    const mismatch = Boolean(check && check.ok && check.remoteVersion !== check.localVersion);
+    $('remoteWarn').hidden = !(unreachable || mismatch);
+    if (unreachable) $('remoteWarnText').textContent = remoteWarnText(check);
+    else if (mismatch) $('remoteWarnText').textContent = versionMismatchText(check);
+    if (check) $('versions').textContent = `扩展版本 ${check.localVersion} · 线上网页版本 ${check.remoteVersion || '—'}`;
   };
+
+  // One random value per popup opening: the QR link changes each time, so the phone always reloads.
+  const NONCE = Date.now().toString(36);
 
   let lastPairUrl = '';
 
   const render = async () => {
-    const info = await bg('getStatus');
+    const info = await bg('getStatus', { nonce: NONCE });
+    if (!info.remoteCheck) $('versions').textContent = `扩展版本 ${info.version}`;
     const key = statusKey(info.status);
     $('dot').className = `dot ${key}`;
     $('statusText').textContent = STATUS_TEXT[key](info.status || {});

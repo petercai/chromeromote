@@ -12,7 +12,7 @@
     <title>Chrome 遥控</title>
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=1.0.3" />
   </head>
   <body>
     <!-- Top status bar -->
@@ -21,6 +21,7 @@
       <span id="statusText">未连接</span>
       <span id="latency" class="dim"></span>
       <span id="site" class="dim site"></span>
+      <span id="ver" class="dim ver"></span>
     </header>
 
     <main>
@@ -77,15 +78,17 @@
           <li>如果链接在 Google App 里打开,点 ⋮ →"在 Chrome 中打开"。</li>
           <li>显示"已连接"后,在 Chrome 菜单里选"添加到主屏幕",以后直接从主屏幕打开。</li>
         </ol>
+        <p class="dim">版本 <span id="verOverlay"></span></p>
       </div>
     </div>
 
     <!-- Error toast -->
     <div id="toast" class="toast" hidden></div>
 
-    <script src="../extension/vendor/peerjs.min.js"></script>
-    <script src="../extension/lib/protocol.js"></script>
-    <script src="../extension/lib/log.js"></script>
-    <script src="app.js"></script>
+    <script src="../extension/lib/version.js?v=1.0.3"></script>
+    <script src="../extension/vendor/peerjs.min.js?v=1.0.3"></script>
+    <script src="../extension/lib/protocol.js?v=1.0.3"></script>
+    <script src="../extension/lib/log.js?v=1.0.3"></script>
+    <script src="app.js?v=1.0.3"></script>
   </body>
 </html>

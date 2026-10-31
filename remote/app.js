@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  const { CMD, MSG, ERR, makeCmd, needsAck, parsePairHash, formatTime, newId, PROTOCOL_VERSION } = CR;
+  const { CMD, MSG, ERR, makeCmd, needsAck, parsePairHash, repairPairUrl, formatTime, newId, PROTOCOL_VERSION } = CR;
   const log = CRLog.createLogger('pwa');
 
   // -------------------------------------------------------------------------
@@ -43,10 +43,14 @@
   // Pairing (hash -> localStorage; hash is stripped so it does not linger in history)
   // -------------------------------------------------------------------------
   const loadPairing = () => {
-    const fromHash = parsePairHash(location.hash);
+    // Scanner apps sometimes percent-encode "#": with "?t=" in the link the mangled form
+    // (…/remote/?t=x%23peer=…) still loads this page, so repair it here (404.html covers the rest).
+    const repaired = repairPairUrl(location.href);
+    if (repaired) log.warn('pairing.url_repaired', { from: location.search.slice(0, 20) });
+    const fromHash = parsePairHash(repaired ? new URL(repaired).hash : location.hash);
     if (fromHash) {
       localStorage.setItem(STORAGE.pairing, JSON.stringify(fromHash));
-      history.replaceState(null, '', location.pathname + location.search);
+      history.replaceState(null, '', location.pathname); // drop secrets (hash) and the one-off ?t= nonce
       log.info('pairing.saved', { peer_id: fromHash.peerId, key: CRLog.redact(fromHash.key) });
       return fromHash;
     }
@@ -444,6 +448,12 @@
     app.status = 'idle';
     connect();
   });
+
+  // Version shown on screen so a stale GitHub Pages deploy is obvious (compare with the extension popup).
+  const VERSION = globalThis.CR_VERSION || 'unknown';
+  $('ver').textContent = `v${VERSION}`;
+  $('verOverlay').textContent = VERSION;
+  log.info('app.start', { version: VERSION, client_id: clientId, paired: Boolean(app.pairing) });
 
   setInterval(ping, PING_INTERVAL_MS);
   setInterval(render, 1000); // re-evaluate staleness (buttons + panel) even without new messages

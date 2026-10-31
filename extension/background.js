@@ -12,7 +12,7 @@
  * Message routing convention: every runtime message carries `target` ('bg' | 'offscreen')
  * or comes from a content script with `type` 'videoState'.
  */
-importScripts('lib/protocol.js', 'lib/log.js');
+importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js');
 
 const { CMD, ERR, ok, fail, executorOf, buildPairUrl, newKey, DEFAULT_HOME_URL } = CR;
 
@@ -254,9 +254,35 @@ const checkRemoteUrl = async (url, { force = false } = {}) => {
   } catch (e) {
     result = { ok: false, status: 0, error: String(e && e.name), checkedAt: Date.now() };
   }
+  // Compare the deployed version with ours, so a stale GitHub Pages deploy is visible at a glance.
+  result.localVersion = CR_VERSION;
+  result.remoteVersion = result.ok ? await fetchRemoteVersion(url) : null;
   remoteCheckCache = { url, at: Date.now(), result };
-  log[result.ok ? 'info' : 'warn']('remote_url.check', { url, ok: result.ok, http_status: result.status, error: result.error });
+  log[result.ok ? 'info' : 'warn']('remote_url.check', {
+    url,
+    ok: result.ok,
+    http_status: result.status,
+    error: result.error,
+    local_version: result.localVersion,
+    remote_version: result.remoteVersion,
+  });
   return result;
+};
+
+// The phone page loads ../extension/lib/version.js, so the deployed copy sits next to it.
+const VERSION_RE = /CR_VERSION\s*=\s*'([^']+)'/;
+const fetchRemoteVersion = async (baseUrl) => {
+  try {
+    const res = await fetch(new URL('../extension/lib/version.js', baseUrl), {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(REMOTE_CHECK_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const match = (await res.text()).match(VERSION_RE);
+    return match ? match[1] : null;
+  } catch (_) {
+    return null;
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -264,7 +290,7 @@ const checkRemoteUrl = async (url, { force = false } = {}) => {
 // ---------------------------------------------------------------------------
 const isPlaceholderUrl = (url) => url.includes('YOUR_GITHUB_USER');
 
-const getPopupStatus = async () => {
+const getPopupStatus = async ({ nonce = '' } = {}) => {
   const config = await loadConfig();
   const { status = null, logs = [] } = await chrome.storage.session.get(['status', 'logs']);
   const remoteCheck = isPlaceholderUrl(config.remoteBaseUrl) ? null : await checkRemoteUrl(config.remoteBaseUrl);
@@ -273,7 +299,8 @@ const getPopupStatus = async () => {
     peerId: config.peerId,
     remoteBaseUrl: config.remoteBaseUrl,
     remoteCheck,
-    pairUrl: buildPairUrl({ baseUrl: config.remoteBaseUrl, peerId: config.peerId, key: config.key }),
+    version: CR_VERSION,
+    pairUrl: buildPairUrl({ baseUrl: config.remoteBaseUrl, peerId: config.peerId, key: config.key, nonce }),
     logCount: logs.length,
   };
 };
@@ -289,7 +316,7 @@ const BG_HANDLERS = Object.freeze({
     logSink(entry);
     return Promise.resolve(true);
   },
-  getStatus: () => getPopupStatus(),
+  getStatus: ({ nonce }) => getPopupStatus({ nonce }),
   recheckRemote: async () => {
     const { remoteBaseUrl } = await loadConfig();
     return checkRemoteUrl(remoteBaseUrl, { force: true });
