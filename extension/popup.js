@@ -21,22 +21,57 @@
     return s.peer || 'connecting';
   };
 
+  // QR rendering tuned for a phone camera reading a TV screen:
+  // - level 'L' keeps modules large (the URL is long), 4-module quiet zone per the QR spec,
+  // - integer cell size chosen to fit ~300px so no fractional CSS scaling blurs the modules.
+  const QR_TARGET_PX = 300;
+  const QR_QUIET_MODULES = 4;
+  const PLACEHOLDER_MARK = 'YOUR_GITHUB_USER';
+
   const renderQr = (text) => {
-    const qr = qrcode(0, 'M'); // type 0 = auto-size
+    const qr = qrcode(0, 'L'); // type 0 = auto-size
     qr.addData(text);
     qr.make();
-    $('qr').innerHTML = qr.createImgTag(6, 0);
+    const modules = qr.getModuleCount() + QR_QUIET_MODULES * 2;
+    const cell = Math.max(2, Math.floor(QR_TARGET_PX / modules));
+    const el = $('qr');
+    el.className = '';
+    el.innerHTML = qr.createImgTag(cell, cell * QR_QUIET_MODULES);
+    return { modules: qr.getModuleCount(), cell };
   };
+
+  const renderNoQr = () => {
+    const el = $('qr');
+    el.className = 'empty';
+    el.textContent = '还没有设置遥控网页地址,二维码暂不显示';
+  };
+
+  let lastPairUrl = '';
 
   const render = async () => {
     const info = await bg('getStatus');
     const key = statusKey(info.status);
     $('dot').className = `dot ${key}`;
     $('statusText').textContent = STATUS_TEXT[key](info.status || {});
-    $('baseUrl').value = info.remoteBaseUrl;
-    $('baseWarn').hidden = !info.remoteBaseUrl.includes('YOUR_GITHUB_USER');
+    if (document.activeElement !== $('baseUrl')) $('baseUrl').value = info.remoteBaseUrl;
+    const placeholder = info.remoteBaseUrl.includes(PLACEHOLDER_MARK);
+    $('baseWarn').hidden = !placeholder;
+    $('copyUrl').disabled = placeholder;
+    $('pairUrl').textContent = placeholder ? '(未设置)' : info.pairUrl;
+    // Re-render only when the link changes (the popup refreshes status every 2 s).
+    if (info.pairUrl === lastPairUrl) return;
+    lastPairUrl = info.pairUrl;
+    if (placeholder) return renderNoQr();
     renderQr(info.pairUrl);
   };
+
+  $('copyUrl').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(lastPairUrl);
+    $('copyUrl').textContent = '已复制';
+    setTimeout(() => {
+      $('copyUrl').textContent = '复制配对链接';
+    }, 1500);
+  });
 
   const showLogs = async () => {
     const logs = await bg('getLogs');

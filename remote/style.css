@@ -101,6 +101,7 @@ input[type="range"]:disabled { opacity: 0.35; }
   display: flex; align-items: center; justify-content: center; text-align: center; padding: 32px;
 }
 .overlay[hidden], .toast[hidden] { display: none; }
+.overlay .steps { text-align: left; padding-left: 20px; line-height: 1.6; font-size: 15px; }
 .toast {
   position: fixed; top: 40px; left: var(--gap); right: var(--gap); z-index: 30;
   background: var(--danger); color: #fff; border-radius: var(--radius); padding: 10px 14px; font-size: 14px;

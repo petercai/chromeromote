@@ -16,8 +16,12 @@
       .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); }
       .dot.online { background: var(--accent); } .dot.connected { background: var(--ok); }
       .dot.error { background: var(--danger); }
-      #qr { background: #fff; padding: 12px; border-radius: 12px; display: flex; justify-content: center; }
-      #qr img { width: 260px; height: 260px; image-rendering: pixelated; }
+      /* QR keeps its native integer module size (no CSS scaling); the quiet zone is part of the image. */
+      #qr { background: #fff; border-radius: 12px; display: flex; justify-content: center; }
+      #qr img { image-rendering: pixelated; }
+      #qr.empty { background: var(--surface); color: var(--danger); padding: 24px 12px; text-align: center; }
+      ol { margin: 8px 0; padding-left: 20px; color: var(--text-dim); font-size: 12px; }
+      #pairUrl { font-family: ui-monospace, monospace; font-size: 11px; }
       .hint { color: var(--text-dim); font-size: 12px; margin: 8px 0; word-break: break-all; }
       .warn { color: var(--danger); }
       label { display: block; margin-top: 12px; color: var(--text-dim); font-size: 12px; }
@@ -35,8 +39,14 @@
     <h1>Chrome 遥控</h1>
     <div class="status"><span id="dot" class="dot"></span><span id="statusText">读取中…</span></div>
     <div id="qr"></div>
-    <p class="hint">用手机扫描二维码打开遥控网页(只需配对一次)。</p>
-    <p id="baseWarn" class="hint warn" hidden>请先设置遥控网页地址(GitHub Pages)。</p>
+    <ol>
+      <li>打开手机<b>相机</b>(或 Google Lens),对准上面的二维码。</li>
+      <li>点击出现的链接;如果是在 Google App 里打开的,点 ⋮ →"在 Chrome 中打开"。</li>
+      <li>手机显示"已连接"后,在 Chrome 菜单里选"添加到主屏幕"。只需配对一次。</li>
+    </ol>
+    <p id="baseWarn" class="hint warn" hidden>请先在下面填写遥控网页地址(GitHub Pages)并保存,二维码才会出现。</p>
+    <p class="hint">扫不了码?复制链接发到手机上打开:<br /><span id="pairUrl"></span></p>
+    <div class="row"><button id="copyUrl">复制配对链接</button></div>
 
     <label for="baseUrl">遥控网页地址</label>
     <input id="baseUrl" placeholder="https://<用户名>.github.io/chrome-remote/remote/" />

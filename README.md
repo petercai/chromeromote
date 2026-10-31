@@ -26,7 +26,7 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
 1. **Publish the phone page on GitHub Pages**
    - Push this repository to GitHub.
    - Open the repository's *Settings → Pages → Deploy from a branch*, then choose `main` / `/ (root)`.
-   - The remote page will be at `https://github.com/petercai/chromeromote/remote/`.
+   - The remote page will be at `https://petercai.github.io/chromeromote/remote/`.
    - The page loads `../extension/lib/*.js`, so the whole repository root must be published.
 2. **Install the extension on the Chromebook**
    - Open `chrome://extensions` and turn on *Developer mode*.
@@ -34,10 +34,31 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
 3. **Set the page address**
    - Click the extension icon "Chrome 遥控".
    - Enter the GitHub Pages address from step 1 and click *保存地址* (Save address).
-4. **Pair the phone**
-   - Scan the QR code in the popup with the phone. The remote page opens and connects.
-   - In the phone browser, use *Add to Home screen*. From then on, opening it from the home screen
-     reconnects automatically, with no scanning needed.
+4. **Pair the phone (once)**
+
+   > The remote page on the phone **does not scan QR codes itself**, and opening its address directly
+   > shows "还没有配对" (not paired yet). The QR code is shown on the **Chromebook** (the TV), and you
+   > scan it with the phone's own camera.
+
+   1. On the Chromebook, click the **"Chrome 遥控"** extension icon in the top-right toolbar. If you
+      don't see it, click the puzzle-piece icon 🧩 and pin "Chrome 遥控".
+   2. The popup shows a QR code. If it says the page address isn't set, finish step 3 first.
+   3. On the Android phone, open the **Camera** app (or **Google Lens**) and point it at the QR code
+      on the TV. Tap the link that appears.
+   4. The link must open in **Chrome**. If it opens inside the Google app (Lens often does this), tap
+      ⋮ → **"在 Chrome 中打开"** (Open in Chrome). Otherwise the pairing is saved in the wrong browser,
+      and Chrome later shows "not paired".
+   5. When the status bar at the top of the phone page shows **"已连接"** (connected), open Chrome's
+      menu ⋮ → **"添加到主屏幕"** (Add to Home screen). From then on, open "Chrome 遥控" from the home
+      screen; it reconnects by itself.
+
+   **Can't scan?**
+   - Click **"复制配对链接"** (copy pairing link) in the popup and send the link to the phone any way
+     you like (messaging app, email, Google Keep and so on), then open it in Chrome on the phone.
+   - If the camera won't focus: move closer to the TV or reduce glare, and make sure the whole QR code
+     including its white border is in frame.
+   - If the camera app doesn't react to QR codes: turn on "Scan QR codes" in the camera settings, or
+     use the "Scan QR code" quick-settings tile on Android 13 and later.
 
 To cut off paired phones, click *重新生成密钥* (Generate new key) in the popup and scan again with the
 phone you want to keep.
@@ -57,6 +78,7 @@ phone you want to keep.
 |---------|---------------|
 | Phone shows "电视端不在线" (TV is offline) | Is Chrome running? Is the extension badge `!`? Open the popup and check the status and the logs |
 | Phone shows "配对失效" (pairing invalid) | The key was regenerated. Scan the QR code again |
+| Phone shows "还没有配对" (not paired yet) | You opened the page address directly, or the link opened outside Chrome. Follow setup step 4 and make sure it opens in Chrome |
 | Toast says "页面上没有找到视频" (`NO_VIDEO`) | The active tab has no `<video>`, or the player has not loaded yet |
 | Toast says "暂不支持点击嵌入框架内的内容" (`CLICK_IFRAME`) | The element under the pointer is inside an iframe, which v1 can't click (see the known limits in the implementation notes) |
 | Toast says "已静音播放" (played muted, `AUTOPLAY_BLOCKED`) | Chrome's autoplay policy blocked playback with sound. Raise the volume slider, or click once on the page by hand |
