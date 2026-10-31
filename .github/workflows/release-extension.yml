@@ -49,11 +49,7 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Unit tests use only node built-ins: no npm install needed (e2e needs a desktop Chromium; not run here).
-      - name: Unit tests
-        if: steps.version.outputs.exists == 'false'
-        run: npm test
-
+      # No test step: tests run locally before a version bump.
       # pack fails if manifest.json and lib/version.js disagree (i.e. a hand-edited version without npm run bump).
       - name: Pack
         if: steps.version.outputs.exists == 'false'

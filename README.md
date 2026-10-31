@@ -38,7 +38,7 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
 2. **Install the extension on the Chromebook (from GitHub Releases)**
    - Every push to `main` that changes the extension version (`npm run bump` rewrites
      `extension/manifest.json`) runs the GitHub Actions workflow
-     [release-extension.yml](.github/workflows/release-extension.yml): unit tests, `npm run pack`, then a
+     [release-extension.yml](.github/workflows/release-extension.yml): `npm run pack`, then a
      GitHub Release `v<version>` with **`chrome-remote-extension.zip`** attached. A version that is
      already released is skipped; *Actions → Release extension → Run workflow* starts it by hand.
    - On the Chromebook, open the always-latest download in Chrome:
