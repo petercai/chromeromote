@@ -67,7 +67,8 @@
   const VIDEO_CMDS = Object.freeze([CMD.PLAY_PAUSE, CMD.SEEK_BY, CMD.SEEK_TO, CMD.VOLUME]);
   const YOUTUBE_CMDS = Object.freeze([CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_OPEN, CMD.YT_WATCH_LATER]);
 
-  // Sections of the phone's YouTube tab (playlist / channel take an id).
+  // Sections of the phone's YouTube tab (playlist / channel / musicList take an id). The music*
+  // sections are the "音乐" source (design 3.13.15): read from music.youtube.com, not www.
   const YT_SECTION = Object.freeze({
     HOME: 'home',
     SUBSCRIPTIONS: 'subscriptions',
@@ -75,6 +76,10 @@
     WATCH_LATER: 'watchLater',
     PLAYLIST: 'playlist',
     CHANNEL: 'channel',
+    MUSIC_HOME: 'musicHome',
+    MUSIC_LIKED: 'musicLiked',
+    MUSIC_PLAYLISTS: 'musicPlaylists',
+    MUSIC_LIST: 'musicList', // a music playlist (VL…), album (MPRE…) or artist (UC…) page
   });
   // High-frequency input that is fire-and-forget (no ack) to avoid flooding the channel.
   const FIRE_AND_FORGET = Object.freeze([CMD.MOVE, CMD.SCROLL]);
@@ -163,7 +168,13 @@
   // YouTube ids: video ids are 11 chars; playlist / channel ids are longer, same alphabet.
   const isVideoId = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{11}$/.test(v);
   const isYtListId = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{2,64}$/.test(v);
-  const YT_ID_SECTIONS = Object.freeze([YT_SECTION.PLAYLIST, YT_SECTION.CHANNEL]);
+  // A music page id is used as the browseId as is: only the page kinds the phone can show.
+  const isMusicPageId = (v) => isYtListId(v) && /^(VL|MPRE|UC)/.test(v);
+  const YT_ID_RULES = Object.freeze({
+    [YT_SECTION.PLAYLIST]: isYtListId,
+    [YT_SECTION.CHANNEL]: isYtListId,
+    [YT_SECTION.MUSIC_LIST]: isMusicPageId,
+  });
   const YT_CURSOR_MAX = 4096;
 
   // Per-command argument validators; return null when valid, else an error code.
@@ -186,7 +197,7 @@
     [CMD.PLAYLIST_STEP]: (a) => (a.dir === 1 || a.dir === -1 ? null : ERR.BAD_MESSAGE),
     [CMD.YT_BROWSE]: (a) =>
       Object.values(YT_SECTION).includes(a.section) &&
-      (YT_ID_SECTIONS.includes(a.section) ? isYtListId(a.id) : a.id === undefined) &&
+      (YT_ID_RULES[a.section] ? YT_ID_RULES[a.section](a.id) : a.id === undefined) &&
       (a.cursor === undefined || (typeof a.cursor === 'string' && a.cursor.length > 0 && a.cursor.length <= YT_CURSOR_MAX))
         ? null
         : ERR.BAD_MESSAGE,
@@ -198,7 +209,8 @@
     [CMD.YT_OPEN]: (a) =>
       (a.videoId !== undefined || a.playlistId !== undefined) &&
       (a.videoId === undefined || isVideoId(a.videoId)) &&
-      (a.playlistId === undefined || isYtListId(a.playlistId))
+      (a.playlistId === undefined || isYtListId(a.playlistId)) &&
+      (a.music === undefined || typeof a.music === 'boolean')
         ? null
         : ERR.BAD_MESSAGE,
     // Only http(s) pages may be opened from the phone; time (resume position) is optional.

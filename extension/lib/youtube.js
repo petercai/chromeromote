@@ -12,16 +12,29 @@
   'use strict';
 
   const ORIGIN = 'https://www.youtube.com';
+  const MUSIC_ORIGIN = 'https://music.youtube.com';
   const { YT_SECTION } = root.CR;
 
   // Sections that only exist for a signed-in account; an anonymous answer means "sign in first".
-  const SIGNED_IN_SECTIONS = Object.freeze([YT_SECTION.HOME, YT_SECTION.SUBSCRIPTIONS, YT_SECTION.PLAYLISTS, YT_SECTION.WATCH_LATER]);
+  // (Music home has content when signed out, so it is not one of them.)
+  const SIGNED_IN_SECTIONS = Object.freeze([
+    YT_SECTION.HOME, YT_SECTION.SUBSCRIPTIONS, YT_SECTION.PLAYLISTS, YT_SECTION.WATCH_LATER,
+    YT_SECTION.MUSIC_LIKED, YT_SECTION.MUSIC_PLAYLISTS,
+  ]);
+  // The "音乐" source (design 3.13.15): these sections are read from music.youtube.com (client WEB_REMIX).
+  const MUSIC_SECTIONS = Object.freeze([YT_SECTION.MUSIC_HOME, YT_SECTION.MUSIC_LIKED, YT_SECTION.MUSIC_PLAYLISTS, YT_SECTION.MUSIC_LIST]);
   const BROWSE_IDS = Object.freeze({
     [YT_SECTION.HOME]: 'FEwhat_to_watch',
     [YT_SECTION.SUBSCRIPTIONS]: 'FEsubscriptions',
     [YT_SECTION.PLAYLISTS]: 'FEplaylist_aggregation',
     [YT_SECTION.WATCH_LATER]: 'VLWL',
+    [YT_SECTION.MUSIC_HOME]: 'FEmusic_home',
+    [YT_SECTION.MUSIC_LIKED]: 'VLLM', // the "Liked music" playlist: songs carry list LM, so playback continues through it
+    [YT_SECTION.MUSIC_PLAYLISTS]: 'FEmusic_liked_playlists',
   });
+  // Music pages the phone can open: playlists (VL…), albums (MPRE…), artists (UC…); same rule as the protocol.
+  const MUSIC_PAGE_RE = /^(VL|MPRE|UC)[A-Za-z0-9_-]+$/;
+  const MUSIC_KEYS = Object.freeze(['musicResponsiveListItemRenderer', 'musicTwoRowItemRenderer']);
   // A channel's "Videos" tab: its params are base64 protobuf starting with "videos"; tab titles are
   // localized, so the tab is found by params, never by title.
   const CHANNEL_VIDEOS_PARAMS_PREFIX = 'EgZ2aWRlb3';
@@ -94,6 +107,7 @@
     count: c.count || null,
     thumb: c.thumb || null,
     progress: c.progress == null ? null : c.progress,
+    playlistId: c.playlistId || null, // music songs: the list to keep playing (album, playlist or radio)
   });
 
   /** Current format (2025+): lockupViewModel for videos and playlists. */
@@ -146,6 +160,56 @@
     return card({ kind: 'playlist', id, title, channel: textOf(p.shortBylineText || p.longBylineText) || null, count: textOf(p.videoCountText) || textOf(p.videoCountShortText) || null, thumb: imageOf(p.thumbnail || p.thumbnails) });
   };
 
+  // YouTube Music (WEB_REMIX) items. Artwork urls end in "=w60-h60-…": ask for a size that is sharp
+  // on a 76 px square at 3x.
+  const musicArt = (node) => {
+    const url = imageOf(node);
+    return url ? url.replace(/=w\d+-h\d+/, '=w240-h240') : null;
+  };
+  const MUSIC_SEPARATOR = ' • ';
+  const musicPageId = (endpoint) => {
+    const id = get(endpoint, 'browseEndpoint.browseId');
+    return MUSIC_PAGE_RE.test(id || '') ? id : null;
+  };
+
+  /** A song row (home shelves, playlists, albums, liked songs), or a row that opens a music page. */
+  const fromMusicListItem = (r) => {
+    const cols = (r.flexColumns || []).map((c) => get(c, 'musicResponsiveListItemFlexColumnRenderer.text'));
+    const title = textOf(cols[0]);
+    if (!title) return null;
+    const watch = findFirst(cols[0], (k, v) => (k === 'watchEndpoint' && isObj(v) && v.videoId ? v : undefined));
+    const videoId = get(r, 'playlistItemData.videoId') || (watch && watch.videoId);
+    // Row 2 is "artist • plays" (or "type • artist"); albums' own rows have no artist column.
+    const byline = textOf(cols[1]).split(MUSIC_SEPARATOR).filter(Boolean);
+    const extra = cols.slice(2).map(textOf).filter(Boolean);
+    const artistId = browseIdOf(cols[1]);
+    if (videoId) {
+      const duration = textOf(get(r, 'fixedColumns.0.musicResponsiveListItemFixedColumnRenderer.text')) || null;
+      return card({
+        kind: 'video', id: videoId, title, channel: byline[0] || null, channelId: artistId,
+        meta: byline.slice(1).concat(extra).join(' · '), duration, thumb: musicArt(r.thumbnail) || thumbOf(videoId),
+        playlistId: watch && watch.playlistId,
+      });
+    }
+    const page = musicPageId(r.navigationEndpoint);
+    return page ? card({ kind: 'playlist', id: page, title, meta: byline.concat(extra).join(' · '), thumb: musicArt(r.thumbnail) }) : null;
+  };
+
+  /** A carousel / grid tile: a playlist, album, artist or mix (opens a page), or a music video (plays). */
+  const fromMusicTwoRow = (r) => {
+    const title = textOf(r.title);
+    if (!title) return null;
+    const nav = r.navigationEndpoint || {};
+    const meta = textOf(r.subtitle).split(MUSIC_SEPARATOR).join(' · ');
+    const thumb = musicArt(r.thumbnailRenderer);
+    const watch = nav.watchEndpoint;
+    if (watch && watch.videoId) return card({ kind: 'video', id: watch.videoId, title, meta, thumb: thumb || thumbOf(watch.videoId), playlistId: watch.playlistId });
+    // A mix ("My Supermix") only has a play endpoint: its list page is VL + the playlist id.
+    const mix = get(nav, 'watchPlaylistEndpoint.playlistId');
+    const page = musicPageId(nav) || (mix ? `VL${mix}` : null);
+    return page ? card({ kind: 'playlist', id: page, title, meta, thumb }) : null;
+  };
+
   const continuationToken = (v) => get(v, 'continuationEndpoint.continuationCommand.token') || findFirst(v, (k, x) => (k === 'continuationCommand' && isObj(x) && x.token ? x.token : undefined)) || null;
 
   /**
@@ -181,6 +245,17 @@
         }
         if (LEGACY_VIDEO_KEYS.indexOf(k) >= 0) return push(fromLegacyVideo(v));
         if (LEGACY_LIST_KEYS.indexOf(k) >= 0) return push(fromLegacyList(v));
+        if (MUSIC_KEYS.indexOf(k) >= 0) {
+          const c = k === MUSIC_KEYS[0] ? fromMusicListItem(v) : fromMusicTwoRow(v);
+          if (c) push(c);
+          else stats.skipped += 1; // e.g. an unavailable song, a mood / genre tile
+          return;
+        }
+        // YouTube Music pages still use the older continuation shape.
+        if (k === 'nextContinuationData') {
+          cursor = v.continuation || cursor;
+          return;
+        }
         if (NOT_ITEMS.indexOf(k) >= 0) return;
         if (SHORTS_KEYS.indexOf(k) >= 0) {
           stats.skipped += 1;
@@ -206,12 +281,18 @@
     if (cursor) return { continuation: cursor };
     if (BROWSE_IDS[section]) return { browseId: BROWSE_IDS[section] };
     if (section === YT_SECTION.PLAYLIST) return { browseId: `VL${id}` };
-    if (section === YT_SECTION.CHANNEL) return { browseId: id };
+    if (section === YT_SECTION.CHANNEL || section === YT_SECTION.MUSIC_LIST) return { browseId: id };
     return null;
   };
 
+  const isMusicSection = (section) => MUSIC_SECTIONS.indexOf(section) >= 0;
+  /** Site whose InnerTube serves a section: music sections need music.youtube.com's own client. */
+  const originOf = (section) => (isMusicSection(section) ? MUSIC_ORIGIN : ORIGIN);
   const needsSignIn = (section) => SIGNED_IN_SECTIONS.indexOf(section) >= 0;
-  const isLoggedOut = (json) => get(json, 'responseContext.mainAppWebResponseContext.loggedOut') === true;
+  // www says loggedOut; YouTube Music only reports logged_in = 0 in its feedback tracking params.
+  const isLoggedOut = (json) =>
+    get(json, 'responseContext.mainAppWebResponseContext.loggedOut') === true ||
+    (get(json, 'responseContext.serviceTrackingParams') || []).some((s) => s.service === 'GFEEDBACK' && (s.params || []).some((p) => p.key === 'logged_in' && p.value === '0'));
 
   /** params of the channel's "Videos" tab, or null (then the channel's home tab is used). */
   const channelVideosParams = (json) => {
@@ -224,13 +305,17 @@
   };
 
   /** Page title: playlist / channel name (null for feeds). */
-  const titleOf = (json) => get(json, 'metadata.playlistMetadataRenderer.title') || get(json, 'metadata.channelMetadataRenderer.title') || null;
+  const MUSIC_HEADERS = Object.freeze(['musicResponsiveHeaderRenderer', 'musicImmersiveHeaderRenderer', 'musicVisualHeaderRenderer', 'musicDetailHeaderRenderer']);
+  const titleOf = (json) =>
+    get(json, 'metadata.playlistMetadataRenderer.title') || get(json, 'metadata.channelMetadataRenderer.title') ||
+    findFirst(json, (k, v) => (MUSIC_HEADERS.indexOf(k) >= 0 && isObj(v) && textOf(v.title) ? textOf(v.title) : undefined)) || null;
 
   /** "Up next" for the video playing now: the watch page's side list, without the video itself. */
   const upNextItems = (json, videoId) => parseItems(get(json, 'contents.twoColumnWatchNextResults.secondaryResults') || json).items.filter((c) => !(c.kind === 'video' && c.id === videoId));
 
-  const watchUrl = ({ videoId, playlistId }) =>
-    `${ORIGIN}/watch?v=${encodeURIComponent(videoId)}${playlistId ? `&list=${encodeURIComponent(playlistId)}` : ''}`;
+  /** Watch page on www, or on music.youtube.com (its player keeps the album / playlist / radio queue). */
+  const watchUrl = ({ videoId, playlistId, music = false }) =>
+    `${music ? MUSIC_ORIGIN : ORIGIN}/watch?v=${encodeURIComponent(videoId)}${playlistId ? `&list=${encodeURIComponent(playlistId)}` : ''}`;
 
   /** Video id of a YouTube watch URL (www / m / music / youtu.be), else null. */
   const videoIdOf = (url) => {
@@ -248,9 +333,12 @@
 
   root.CRYt = Object.freeze({
     ORIGIN,
+    MUSIC_ORIGIN,
     textOf,
     parseItems,
     browseRequest,
+    isMusicSection,
+    originOf,
     needsSignIn,
     isLoggedOut,
     channelVideosParams,

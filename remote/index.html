@@ -17,7 +17,7 @@
     <link rel="apple-touch-icon" href="icons/icon-180.png" />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icons/icon-192.png" type="image/png" />
-    <link rel="stylesheet" href="style.css?v=1.0.27" />
+    <link rel="stylesheet" href="style.css?v=1.0.28" />
   </head>
   <body>
     <!-- Top status bar: connection dot + WHICH Chromebook (tap to switch) -->
@@ -35,8 +35,8 @@
     </header>
 
     <main>
-      <!-- Browse tab: touchpad + browser buttons -->
-      <section id="tab-browse" class="tab active" aria-label="浏览">
+      <!-- iyf.tv tab (was "浏览", iteration 25): touchpad + browser buttons for sites without a catalog of their own -->
+      <section id="tab-browse" class="tab active" aria-label="iyf.tv">
         <div id="touchpad" class="touchpad" aria-label="触控板">
           <span class="touchpad-hint">单指滑动移动指针 · 轻点 = 点击 · 双指上下滑动 = 滚动</span>
         </div>
@@ -119,11 +119,21 @@
 
       <!-- YouTube tab (design 3.13, option A): browse on the phone, the TV keeps playing until a card is tapped -->
       <section id="tab-youtube" class="tab" aria-label="YouTube">
-        <div id="ytChips" class="yt-chips" role="tablist" aria-label="YouTube 分区">
+        <!-- Source switch (design 3.13.2 / 3.13.15): YouTube videos or YouTube Music; each keeps its own place -->
+        <div id="ytSource" class="segment" role="tablist" aria-label="YouTube 来源">
+          <button role="tab" data-yt-source="video" class="active" aria-selected="true">视频</button>
+          <button role="tab" data-yt-source="music" aria-selected="false">音乐</button>
+        </div>
+        <div class="yt-chips" data-yt-source="video" role="tablist" aria-label="YouTube 分区">
           <button role="tab" data-yt-section="home" class="active">首页</button>
           <button role="tab" data-yt-section="subscriptions">订阅</button>
           <button role="tab" data-yt-section="playlists">播放列表</button>
           <button role="tab" data-yt-section="watchLater">稍后观看</button>
+        </div>
+        <div class="yt-chips" data-yt-source="music" role="tablist" aria-label="YouTube Music 分区" hidden>
+          <button role="tab" data-yt-section="musicHome">首页</button>
+          <button role="tab" data-yt-section="musicLiked">喜欢的歌曲</button>
+          <button role="tab" data-yt-section="musicPlaylists">歌单</button>
         </div>
         <div id="ytHead" class="yt-head" hidden>
           <button id="ytBack" class="yt-back" aria-label="返回上一级">
@@ -165,7 +175,7 @@
 
     <!-- Bottom tab bar -->
     <nav class="tabbar">
-      <button data-tab="browse" class="active">浏览</button>
+      <button data-tab="browse" class="active">iyf.tv</button>
       <button data-tab="youtube">YouTube</button>
       <button data-tab="play">播放</button>
       <button data-tab="library">片单</button>
@@ -262,12 +272,12 @@
     <!-- Toast (error = red, ok = green) -->
     <div id="toast" class="toast" hidden></div>
 
-    <script src="../extension/lib/version.js?v=1.0.27"></script>
-    <script src="../extension/vendor/peerjs.min.js?v=1.0.27"></script>
-    <script src="../extension/lib/protocol.js?v=1.0.27"></script>
-    <script src="../extension/lib/log.js?v=1.0.27"></script>
-    <script src="../extension/lib/youtube.js?v=1.0.27"></script>
-    <script src="../extension/lib/library.js?v=1.0.27"></script>
-    <script src="app.js?v=1.0.27"></script>
+    <script src="../extension/lib/version.js?v=1.0.28"></script>
+    <script src="../extension/vendor/peerjs.min.js?v=1.0.28"></script>
+    <script src="../extension/lib/protocol.js?v=1.0.28"></script>
+    <script src="../extension/lib/log.js?v=1.0.28"></script>
+    <script src="../extension/lib/youtube.js?v=1.0.28"></script>
+    <script src="../extension/lib/library.js?v=1.0.28"></script>
+    <script src="app.js?v=1.0.28"></script>
   </body>
 </html>

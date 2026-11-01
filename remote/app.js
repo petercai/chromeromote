@@ -162,8 +162,10 @@
     confirm: null, // {title, body, run} while the delete sheet is open
     playlist: null, // episode-list summary pushed with the video state (design 3.11), null = none
     // YouTube tab (design 3.13): a stack of views; each keeps its own cards, cursor and scroll position,
-    // so "back" restores the previous list instantly. Root views are the four sections.
+    // so "back" restores the previous list instantly. Root views are the source's sections.
     yt: [],
+    ytSource: 'video', // "视频 / 音乐" switch (3.13.15); the other source's stack waits in ytStacks
+    ytStacks: {},
     ytSeq: 0, // request generation: replies for a view that is no longer shown are dropped
     ytMenu: null, // card whose long-press menu is open
     ytAutoSwitched: false, // the TV-on-YouTube auto switch happens once per connection (Q41)
@@ -776,14 +778,23 @@
     [YT_SECTION.SUBSCRIPTIONS]: '订阅',
     [YT_SECTION.PLAYLISTS]: '播放列表',
     [YT_SECTION.WATCH_LATER]: '稍后观看',
+    [YT_SECTION.MUSIC_HOME]: '首页',
+    [YT_SECTION.MUSIC_LIKED]: '喜欢的歌曲',
+    [YT_SECTION.MUSIC_PLAYLISTS]: '歌单',
   });
   const YT_EMPTY_TEXT = Object.freeze({
     [YT_SECTION.WATCH_LATER]: '稍后观看是空的(长按视频可以加入)',
     [YT_SECTION.PLAYLISTS]: '还没有播放列表',
+    [YT_SECTION.MUSIC_LIKED]: '还没有喜欢的歌曲',
+    [YT_SECTION.MUSIC_PLAYLISTS]: '还没有歌单',
   });
+  // "视频 / 音乐" sources and the section each one opens on.
+  const YT_SOURCE = Object.freeze({ VIDEO: 'video', MUSIC: 'music' });
+  const YT_SOURCE_ROOT = Object.freeze({ [YT_SOURCE.VIDEO]: YT_SECTION.HOME, [YT_SOURCE.MUSIC]: YT_SECTION.MUSIC_HOME });
 
   const ytView = (section, id = null, title = null) => ({ section, id, title, items: [], cursor: null, loading: false, error: null, loaded: false, scrollTop: 0 });
   const ytCurrent = () => app.yt[app.yt.length - 1] || null;
+  const isMusicView = (view) => Boolean(view) && CRYt.isMusicSection(view.section);
 
   /** Load the first page of the current view (more = the next page). Never runs two loads for one view. */
   const loadYt = async ({ more = false } = {}) => {
@@ -810,10 +821,23 @@
   };
 
   const ensureYtLoaded = () => {
-    if (!app.yt.length) app.yt = [ytView(YT_SECTION.HOME)];
+    if (!app.yt.length) app.yt = [ytView(YT_SOURCE_ROOT[app.ytSource])];
     const view = ytCurrent();
-    if (!view.loaded && !view.loading) loadYt();
-    else renderYt();
+    if (!view.loaded && !view.loading && app.status === 'connected') loadYt();
+    else renderYt(); // offline too: the switch and chips still show where you are
+  };
+
+  /** "视频 / 音乐": park the current stack (with its scroll position), bring back the other source's. */
+  const setYtSource = (source) => {
+    if (source === app.ytSource) return;
+    const cur = ytCurrent();
+    if (cur) cur.scrollTop = $('ytList').scrollTop;
+    app.ytStacks[app.ytSource] = app.yt;
+    app.ytSource = source;
+    app.yt = app.ytStacks[source] || [];
+    log.info('ui.yt_source', { source, restored: app.yt.length > 0 });
+    ensureYtLoaded();
+    $('ytList').scrollTop = ytCurrent().scrollTop;
   };
 
   const openYtRoot = (section) => {
@@ -838,10 +862,13 @@
   };
 
   /** Tap a card: a video plays on the TV (inside a playlist: continuing through it); a playlist opens on the phone. */
+  // A music song keeps playing through its own list (album, playlist, liked songs or radio).
   const openYtCard = async (c, view) => {
-    if (c.kind === 'playlist') return pushYtView(YT_SECTION.PLAYLIST, c.id, c.title);
-    log.info('ui.yt_open', { video_id: c.id, from: view ? view.section : 'upNext' });
-    const res = await act(CMD.YT_OPEN, { videoId: c.id, ...(view && view.section === YT_SECTION.PLAYLIST ? { playlistId: view.id } : {}) });
+    const music = isMusicView(view);
+    if (c.kind === 'playlist') return pushYtView(music ? YT_SECTION.MUSIC_LIST : YT_SECTION.PLAYLIST, c.id, c.title);
+    log.info('ui.yt_open', { video_id: c.id, from: view ? view.section : 'upNext', music });
+    const listId = music ? c.playlistId : view && view.section === YT_SECTION.PLAYLIST ? view.id : null;
+    const res = await act(CMD.YT_OPEN, { videoId: c.id, ...(listId ? { playlistId: listId } : {}), ...(music ? { music: true } : {}) });
     if (!res.ok) return;
     toast(`正在电视上打开:${c.title}`, 'ok');
     switchTab('play');
@@ -880,9 +907,12 @@
   };
 
   const ytCard = (c, view) => {
+    const music = isMusicView(view);
     const li = el('li');
     const b = el('button', 'yt-card');
-    const thumb = el('span', 'yt-thumb');
+    b.dataset.kind = c.kind; // what a tap does (play / open), for tests and inspection
+    b.dataset.id = c.id;
+    const thumb = el('span', music ? 'yt-thumb yt-thumb-square' : 'yt-thumb');
     if (c.thumb) {
       const img = el('img');
       img.src = c.thumb;
@@ -899,7 +929,8 @@
     }
     const text = el('span', 'yt-text');
     text.append(el('span', 't', c.title));
-    const sub = c.kind === 'playlist' ? ['播放列表', c.channel, c.meta] : [c.channel, c.meta];
+    // Music tiles already say what they are ("专辑 · 歌手"); www playlists get a label.
+    const sub = c.kind === 'playlist' && !music ? ['播放列表', c.channel, c.meta] : [c.channel, c.meta];
     text.append(el('span', 's', sub.filter(Boolean).join(' · ')));
     b.append(thumb, text);
     b.addEventListener('click', () => {
@@ -909,7 +940,8 @@
       }
       openYtCard(c, view);
     });
-    if (c.kind === 'video') onLongPress(b, () => openYtMenu(c));
+    // The menu (watch later / open channel) is about www videos; music has no long press.
+    if (c.kind === 'video' && !music) onLongPress(b, () => openYtMenu(c));
     li.append(b);
     return li;
   };
@@ -918,7 +950,7 @@
     if (view.loading && !view.items.length) return '正在读取…';
     if (view.loading) return '正在读取更多…';
     if (view.error) return ERROR_TEXT[view.error] || `读取失败:${view.error}`;
-    if (view.loaded && !view.items.length) return YT_EMPTY_TEXT[view.section] || '这里还没有视频';
+    if (view.loaded && !view.items.length) return YT_EMPTY_TEXT[view.section] || (isMusicView(view) ? '这里还没有歌曲' : '这里还没有视频');
     return '';
   };
 
@@ -926,12 +958,15 @@
     const view = ytCurrent();
     const root = app.yt[0];
     const nested = app.yt.length > 1;
-    document.querySelectorAll('#ytChips button').forEach((b) => {
-      const on = Boolean(root) && !nested && b.dataset.ytSection === root.section;
+    const toggleOn = (b, on) => {
       b.classList.toggle('active', on);
       b.setAttribute('aria-selected', String(on));
+    };
+    document.querySelectorAll('#ytSource button').forEach((b) => toggleOn(b, b.dataset.ytSource === app.ytSource));
+    document.querySelectorAll('.yt-chips').forEach((group) => {
+      group.hidden = nested || group.dataset.ytSource !== app.ytSource;
     });
-    $('ytChips').hidden = nested;
+    document.querySelectorAll('.yt-chips button').forEach((b) => toggleOn(b, Boolean(root) && !nested && b.dataset.ytSection === root.section));
     $('ytHead').hidden = !nested;
     if (!view) {
       setChildren($('ytList'), []);
@@ -939,7 +974,8 @@
       return;
     }
     $('ytTitle').textContent = view.title || YT_ROOT_TITLES[view.section] || '';
-    $('ytPlayAll').hidden = !(view.section === YT_SECTION.PLAYLIST && view.items.some((c) => c.kind === 'video'));
+    const listView = view.section === YT_SECTION.PLAYLIST || view.section === YT_SECTION.MUSIC_LIST;
+    $('ytPlayAll').hidden = !(listView && view.items.some((c) => c.kind === 'video'));
     setChildren($('ytList'), view.items.map((c) => ytCard(c, view)));
     const status = ytStatusText(view);
     $('ytState').hidden = !status;
@@ -1063,12 +1099,19 @@
     })
   );
 
-  document.querySelectorAll('#ytChips button').forEach((b) => b.addEventListener('click', () => openYtRoot(b.dataset.ytSection)));
+  document.querySelectorAll('#ytSource button').forEach((b) => b.addEventListener('click', () => setYtSource(b.dataset.ytSource)));
+  document.querySelectorAll('.yt-chips button').forEach((b) => b.addEventListener('click', () => openYtRoot(b.dataset.ytSection)));
   $('ytBack').addEventListener('click', popYtView);
   $('ytRetry').addEventListener('click', () => loadYt({ more: Boolean(ytCurrent() && ytCurrent().items.length) }));
   $('ytPlayAll').addEventListener('click', () => {
     const view = ytCurrent();
-    if (view && view.section === YT_SECTION.PLAYLIST) act(CMD.YT_OPEN, { playlistId: view.id }).then((res) => res.ok && switchTab('play'));
+    if (!view) return;
+    if (view.section === YT_SECTION.PLAYLIST) act(CMD.YT_OPEN, { playlistId: view.id }).then((res) => res.ok && switchTab('play'));
+    // Music: the first song, with the list it carries (albums, playlists and artists alike).
+    if (view.section === YT_SECTION.MUSIC_LIST) {
+      const first = view.items.find((c) => c.kind === 'video');
+      if (first) openYtCard(first, view);
+    }
   });
   $('ytNow').addEventListener('click', () => switchTab('play'));
   // Infinite scroll: fetch the next page well before the end (YT_MORE_SCREENS screens ahead).
@@ -1092,6 +1135,7 @@
     closeYtMenu();
     if (!c || !c.channelId) return;
     switchTab('youtube');
+    setYtSource(YT_SOURCE.VIDEO); // channels are www pages (the menu also opens from "Up next")
     if (!app.yt.length) app.yt = [ytView(YT_SECTION.HOME)];
     pushYtView(YT_SECTION.CHANNEL, c.channelId, c.channel);
   });
@@ -1142,6 +1186,7 @@
     app.video = { hasVideo: false };
     app.url = '';
     app.yt = []; // another Chromebook may be signed in to another YouTube account
+    app.ytStacks = {};
     app.upNext = { videoId: null, items: [] };
     renderYt();
     renderUpNext();

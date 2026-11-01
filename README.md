@@ -18,7 +18,7 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
 |------|------------|
 | `extension/` | MV3 Chrome extension: service worker (command router), offscreen document (WebRTC endpoint), content script (virtual pointer and video control), popup (pairing QR code and logs) |
 | `extension/lib/` | Wire protocol and logger, **shared** by the extension and the phone page |
-| `remote/` | Phone remote PWA (layout B: Browse / Play tabs) |
+| `remote/` | Phone remote PWA (tabs: iyf.tv (touchpad) / YouTube / Play / Library) |
 | `tests/` | Unit tests (protocol) and an end-to-end test (real extension + real PeerJS) |
 
 ## Setup (one time)
@@ -127,7 +127,7 @@ phone you want to keep.
    install: Chrome Apps are no longer supported on ChromeOS, and a web app can't control Chrome tabs.
 2. On the phone, open "Chrome 遥控" from the home screen. If no Chrome window is open, tap 首页
    (Home) to open one (1.0.17).
-3. **Browse** tab: slide one finger to move the pointer, tap to click, and slide two fingers to
+3. **iyf.tv** tab (called 浏览 / Browse before 1.0.28): slide one finger to move the pointer, tap to click, and slide two fingers to
    scroll. The buttons are Back, Reload, Home (site.com), Page up and Page down.
 4. When a video starts, the phone switches to the **Play** tab by itself. It has play/pause, −10 / +10
    / +30 s, a seek slider (the video jumps when you let go), a volume slider and fullscreen.
@@ -203,7 +203,8 @@ Open *Terminal → Run Task…* (the default build task is `Ctrl+Shift+B`):
 Browse YouTube on the phone and play on the TV, without the pointer. Chrome on the Chromebook must be
 **signed in to YouTube**; the phone uses that account.
 
-- The **YouTube** tab has four sections: **首页** (Home recommendations), **订阅** (Subscriptions),
+- The top of the **YouTube** tab switches between **视频** (Videos) and **音乐** (Music, below); each side
+  remembers where you were. **视频** has four sections: **首页** (Home recommendations), **订阅** (Subscriptions),
   **播放列表** (Playlists) and **稍后观看** (Watch later). Scroll down and more videos load by themselves.
 - Tap a video: the TV opens it full screen. While you browse, the TV keeps playing what it plays; it only
   changes when you tap.
@@ -232,7 +233,11 @@ When the TV plays music on **music.youtube.com**, the **播放** (Play) tab turn
 - During an ad, the phone still shows the song that comes next, with an orange **广告** badge.
 - If the buttons stop working after a YouTube Music update, the extension log shows `music.not_found` with the
   control that no longer matches; the selectors are in `extension/lib/music.js`.
-- Starting music from the phone (library, mixes, liked songs) is the next phase; for now start it on the TV.
+- Pick music on the phone (1.0.28): **YouTube** tab → **音乐** (Music), with **首页** (Home: quick picks,
+  mixes, albums), **喜欢的歌曲** (Liked songs) and **歌单** (your playlists). Tap a song: the TV plays it in
+  YouTube Music and keeps going through its album / playlist (or its radio). Tap a playlist or album to see
+  its songs; **▶ 全部播放** plays from the first song. The extension reads these lists in a
+  **music.youtube.com** tab (the TV's, or one it opens in the background).
 
 ## Version number: is GitHub serving my latest code?
 

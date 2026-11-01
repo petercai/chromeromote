@@ -395,10 +395,11 @@ const LIBRARY_ACTIONS = Object.freeze({
 // is any open youtube.com tab, else a background tab we open once; the TV's tab is never touched
 // while the phone browses (Q40). Parsing is pure (lib/youtube.js).
 // ---------------------------------------------------------------------------
-const YT_DATA_TAB_URL = `${CRYt.ORIGIN}/feed/you`;
+// One data tab per site: music sections need music.youtube.com's own InnerTube client (design 3.13.15).
+const YT_DATA_TAB_URLS = Object.freeze({ [CRYt.ORIGIN]: `${CRYt.ORIGIN}/feed/you`, [CRYt.MUSIC_ORIGIN]: `${CRYt.MUSIC_ORIGIN}/` });
 const YT_TAB_READY_MS = 15000;
 const YT_UP_NEXT_MAX = 20;
-let ytDataTabId = null; // last data tab; re-validated before each use
+const ytDataTabIds = new Map(); // origin -> last data tab; re-validated before each use
 
 /**
  * Runs in the youtube.com page (world MAIN): one InnerTube POST with the page's own client config.
@@ -449,23 +450,26 @@ const waitTabComplete = async (tabId) => {
   return false;
 };
 
-/** A youtube.com tab to run requests in: the last one, any open one (background first), or a new background tab. */
-const ytDataTab = async () => {
-  const last = ytDataTabId === null ? null : await chrome.tabs.get(ytDataTabId).catch(() => null);
-  if (last && CRYt.isYoutubeUrl(last.url)) return last;
-  const open = await chrome.tabs.query({ url: `${CRYt.ORIGIN}/*` });
+const onOrigin = (url, origin) => String(url || '').indexOf(`${origin}/`) === 0;
+
+/** A tab of `origin` to run requests in: the last one, any open one (background first), or a new background tab. */
+const ytDataTab = async (origin) => {
+  const lastId = ytDataTabIds.get(origin);
+  const last = lastId === undefined ? null : await chrome.tabs.get(lastId).catch(() => null);
+  if (last && onOrigin(last.url, origin)) return last;
+  const open = await chrome.tabs.query({ url: `${origin}/*` });
   const pick = open.find((t) => !t.active) || open[0];
   const target = await getTargetTab();
-  const tab = pick || (await chrome.tabs.create({ url: YT_DATA_TAB_URL, active: false, ...(target ? { windowId: target.windowId } : {}) }));
-  ytDataTabId = tab.id;
-  log.info('yt.data_tab', { action: pick ? 'reuse' : 'create', tab_id: tab.id, active: Boolean(tab.active) });
+  const tab = pick || (await chrome.tabs.create({ url: YT_DATA_TAB_URLS[origin], active: false, ...(target ? { windowId: target.windowId } : {}) }));
+  ytDataTabIds.set(origin, tab.id);
+  log.info('yt.data_tab', { origin, action: pick ? 'reuse' : 'create', tab_id: tab.id, active: Boolean(tab.active) });
   return tab;
 };
 
-/** One InnerTube call; ok(json) or fail(YT_FAILED, {reason}). */
+/** One InnerTube call on the section's site; ok(json) or fail(YT_FAILED, {reason}). */
 const ytRequest = async (endpoint, body, section) => {
   const started = Date.now();
-  const tab = await ytDataTab();
+  const tab = await ytDataTab(CRYt.originOf(section));
   if (!(await waitTabComplete(tab.id))) return fail(ERR.YT_FAILED, { reason: 'data_tab_not_ready' });
   const [injection] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: innertubeInPage, args: [endpoint, body, YT_TAB_READY_MS] });
   const r = (injection && injection.result) || { error: 'no_result' };
@@ -500,21 +504,25 @@ const ytUpNext = async ({ videoId }) => {
   return ok({ items });
 };
 
-/** ytOpen: play on the TV, full screen (Q45); a bare playlist starts at its first video. */
-const ytOpen = async (tab, { videoId, playlistId }) => {
+/**
+ * ytOpen: play on the TV, full screen (Q45); a bare playlist starts at its first video.
+ * music: the song opens in the YouTube Music player (its queue, the phone's music layout), and the
+ * video is not filled over that player.
+ */
+const ytOpen = async (tab, { videoId, playlistId, music = false }) => {
   let first = videoId;
   if (!first) {
-    const list = await ytBrowse({ section: CR.YT_SECTION.PLAYLIST, id: playlistId });
+    const list = await ytBrowse(music ? { section: CR.YT_SECTION.MUSIC_LIST, id: `VL${playlistId}` } : { section: CR.YT_SECTION.PLAYLIST, id: playlistId });
     if (!list.ok) return list;
     const firstVideo = list.data.items.find((c) => c.kind === 'video');
     if (!firstVideo) return fail(ERR.YT_FAILED, { reason: 'empty_playlist' });
     first = firstVideo.id;
   }
-  const url = CRYt.watchUrl({ videoId: first, playlistId });
-  await chrome.storage.session.set({ [pendingFillKey(tab.id)]: { at: Date.now(), videoId: first } });
+  const url = CRYt.watchUrl({ videoId: first, playlistId, music });
+  if (!music) await chrome.storage.session.set({ [pendingFillKey(tab.id)]: { at: Date.now(), videoId: first } });
   await chrome.tabs.update(tab.id, { url, active: true });
   await setFullscreen(tab, true).catch((e) => log.warn('yt.fullscreen_failed', { tab_id: tab.id, error: String(e) }));
-  log.info('yt.open', { video_id: first, playlist_id: playlistId || null, tab_id: tab.id });
+  log.info('yt.open', { video_id: first, playlist_id: playlistId || null, music, tab_id: tab.id });
   return ok({ url });
 };
 
