@@ -35,6 +35,9 @@
     PLAYLIST_GET: 'playlistGet',
     PLAYLIST_OPEN: 'playlistOpen',
     PLAYLIST_STEP: 'playlistStep',
+    // YouTube Music player on the TV (content script, top frame only; design 3.13.14)
+    MUSIC_CONTROL: 'musicControl',
+    MUSIC_QUEUE_PLAY: 'musicQueuePlay',
     // Video-level (content script, whichever frame owns the <video>)
     PLAY_PAUSE: 'playPause',
     SEEK_BY: 'seekBy',
@@ -56,7 +59,11 @@
   const PAGE_CMDS = Object.freeze([
     CMD.MOVE, CMD.CLICK, CMD.SCROLL, CMD.PAGE_UP, CMD.PAGE_DOWN,
     CMD.PLAYLIST_GET, CMD.PLAYLIST_OPEN, CMD.PLAYLIST_STEP,
+    CMD.MUSIC_CONTROL, CMD.MUSIC_QUEUE_PLAY,
   ]);
+  // musicControl actions (the YouTube Music player-bar buttons; selectors in lib/music.js).
+  const MUSIC_ACTIONS = Object.freeze(['previous', 'next', 'like', 'dislike', 'repeat', 'shuffle']);
+  const MUSIC_QUEUE_MAX = 1000;
   const VIDEO_CMDS = Object.freeze([CMD.PLAY_PAUSE, CMD.SEEK_BY, CMD.SEEK_TO, CMD.VOLUME]);
   const YOUTUBE_CMDS = Object.freeze([CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_OPEN, CMD.YT_WATCH_LATER]);
 
@@ -98,6 +105,7 @@
     NO_EPISODE: 'NO_EPISODE', // no previous / next numbered episode
     YT_SIGNED_OUT: 'YT_SIGNED_OUT', // a signed-in YouTube section answered as anonymous: sign in on the Chromebook
     YT_FAILED: 'YT_FAILED', // YouTube request failed or its data was not understood (data.reason says why)
+    NO_MUSIC: 'NO_MUSIC', // the page is not a YouTube Music player (or its controls were not found)
     PEER_UNAVAILABLE: 'PEER_UNAVAILABLE',
     TIMEOUT: 'TIMEOUT',
     INTERNAL: 'INTERNAL',
@@ -183,6 +191,8 @@
         ? null
         : ERR.BAD_MESSAGE,
     [CMD.YT_UP_NEXT]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),
+    [CMD.MUSIC_CONTROL]: (a) => (MUSIC_ACTIONS.includes(a.action) ? null : ERR.BAD_MESSAGE),
+    [CMD.MUSIC_QUEUE_PLAY]: (a) => (Number.isInteger(a.index) && a.index >= 0 && a.index < MUSIC_QUEUE_MAX ? null : ERR.BAD_MESSAGE),
     [CMD.YT_WATCH_LATER]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),
     // At least one of videoId / playlistId (a playlist alone starts at its first video).
     [CMD.YT_OPEN]: (a) =>
@@ -322,6 +332,7 @@
     needsAck,
     TAB_NEED,
     YT_SECTION,
+    MUSIC_ACTIONS,
     tabNeedOf,
     makeCmd,
     makeReply,

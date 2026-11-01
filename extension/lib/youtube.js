@@ -244,6 +244,7 @@
     }
   };
   const isYoutubeUrl = (url) => /^https:\/\/(www\.|m\.)?youtube\.com\//.test(String(url || ''));
+  const isMusicUrl = (url) => /^https:\/\/music\.youtube\.com\//.test(String(url || ''));
 
   root.CRYt = Object.freeze({
     ORIGIN,
@@ -258,6 +259,7 @@
     watchUrl,
     videoIdOf,
     isYoutubeUrl,
+    isMusicUrl,
     thumbOf,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

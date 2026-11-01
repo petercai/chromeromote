@@ -180,7 +180,7 @@ const resolveTab = async (cmd) => {
 const injectContentScripts = (tabId) =>
   chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
-    files: ['lib/protocol.js', 'lib/log.js', 'lib/playlist.js', 'content.js'],
+    files: ['lib/protocol.js', 'lib/log.js', 'lib/playlist.js', 'lib/music.js', 'content.js'],
   });
 
 const isNoReceiver = (e) => /Receiving end does not exist|Could not establish connection/i.test(String(e && e.message));
@@ -274,7 +274,13 @@ const applyPendingFill = async (tab, state, senderUrl) => {
 // ---------------------------------------------------------------------------
 const RECENT_WRITE_INTERVAL_MS = 10000;
 const lastVideoByTab = new Map(); // tabId -> latest video state (for bookmarking "where I am")
-const lastPlaylistByTab = new Map(); // tabId -> latest episode-list summary from the top frame (design 3.11)
+// tabId -> {playlist, music}: latest page summaries from the top frame (episode list 3.11, YouTube Music 3.13.14)
+const lastSummariesByTab = new Map();
+const SUMMARY_KINDS = Object.freeze(['playlist', 'music']);
+const summariesOf = (tabId) => {
+  const s = lastSummariesByTab.get(tabId) || {};
+  return Object.fromEntries(SUMMARY_KINDS.map((k) => [k, s[k] || null]));
+};
 const lastRecentWrite = new Map(); // entry key -> ts of last write (throttle, sync write quota)
 
 const syncStore = chrome.storage.sync;
@@ -591,7 +597,7 @@ const executeCommand = async (msg, clientId) => {
 const forwardVideoState = async (state, sender) => {
   const tab = await getTargetTab();
   if (!tab || !sender.tab || sender.tab.id !== tab.id) return;
-  sendToOffscreen({ type: 'state', state: { ...state, title: tab.title || '', url: tab.url || '', playlist: lastPlaylistByTab.get(tab.id) || null, ts: Date.now() } });
+  sendToOffscreen({ type: 'state', state: { ...state, title: tab.title || '', url: tab.url || '', ...summariesOf(tab.id), ts: Date.now() } });
   // Library side effects never block or break state forwarding.
   lastVideoByTab.set(tab.id, state);
   recordRecent(tab, state).catch((e) => log.warn('library.recent_failed', { error: String(e) }));
@@ -761,12 +767,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     forwardVideoState(message.state, sender);
     return false;
   }
-  // Episode-list summary: sent by the top frame only when it changes; merged into the next video state.
-  if (message && message.type === 'playlistState' && sender.tab) {
+  // Page summaries (episode list, YouTube Music): sent by the top frame only when they change;
+  // merged into the next video state.
+  if (message && message.type === 'pageSummary' && sender.tab && SUMMARY_KINDS.includes(message.kind)) {
     const s = message.summary;
-    log.debug('playlist.state', { tab_id: sender.tab.id, current: s && s.current, total: s && s.total });
-    if (s) lastPlaylistByTab.set(sender.tab.id, s);
-    else lastPlaylistByTab.delete(sender.tab.id);
+    log.debug('summary.state', { tab_id: sender.tab.id, kind: message.kind, current: s && s.current, total: s && s.total });
+    lastSummariesByTab.set(sender.tab.id, { ...(lastSummariesByTab.get(sender.tab.id) || {}), [message.kind]: s || null });
     return false;
   }
   if (!message || message.target !== 'bg') return false;
@@ -815,7 +821,7 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 chrome.tabs.onActivated.addListener(() => announceNoVideo());
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.status === 'loading') {
-    lastPlaylistByTab.delete(tabId); // the new page's content script pushes its own summary
+    lastSummariesByTab.delete(tabId); // the new page's content script pushes its own summaries
     announceNoVideo();
   }
 });

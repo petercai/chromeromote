@@ -75,6 +75,7 @@
     [ERR.SYNC_FAILED]: '片单同步失败(Google 账号同步不可用或超出容量)',
     [ERR.YT_SIGNED_OUT]: '请先在 Chromebook 的 Chrome 里登录 YouTube',
     [ERR.YT_FAILED]: 'YouTube 读取失败',
+    [ERR.NO_MUSIC]: '没有找到 YouTube Music 的播放器(页面可能改版了)',
   });
 
   const $ = (id) => document.getElementById(id);
@@ -167,6 +168,8 @@
     ytMenu: null, // card whose long-press menu is open
     ytAutoSwitched: false, // the TV-on-YouTube auto switch happens once per connection (Q41)
     upNext: { videoId: null, items: [] },
+    music: null, // YouTube Music now-playing summary pushed with the video state (design 3.13.14)
+    musicQueueSig: null, // queue list is rebuilt only when this changes
     plSheet: null, // {loading, data, error} while the episode sheet is open
     switcherOpen: false,
     showHelp: false, // "add Chromebook" instructions over a paired session
@@ -253,7 +256,10 @@
     const v = app.video;
     const available = videoAvailable();
     $('title').textContent = available ? app.title || '正在播放' : '没有正在播放的视频';
-    $('playPause').textContent = available && !v.paused ? '❚❚' : '▶';
+    // Every play / pause button (video transport and the music row) shows the same state.
+    document.querySelectorAll('button[data-cmd="playPause"]').forEach((b) => {
+      b.textContent = available && !v.paused ? '❚❚' : '▶';
+    });
     $('seek').disabled = !available || !v.dur;
     $('volume').disabled = !available;
     if (!app.draggingSeek) {
@@ -297,6 +303,7 @@
     renderOffline();
     renderSwitcher();
     renderYtNow();
+    renderMusic();
   };
 
   const switchTab = (tab) => {
@@ -353,6 +360,7 @@
     app.videoTs = Date.now();
     app.title = state.title || app.title;
     app.playlist = state.playlist || null;
+    app.music = state.music || null;
     app.url = state.url || app.url;
     // New page on the TV: refresh the library once so the ★ reflects this page.
     const key = entryKey(app.url);
@@ -918,7 +926,73 @@
     const view = ytCurrent();
     const root = app.yt[0];
     const nested = app.yt.length > 1;
-    document.querySelectorAll('#ytChips button').forEach((b) => {
+    // -------------------------------------------------------------------------
+  // YouTube Music on the Play tab (design 3.13.14): the TV's player, read by the extension
+  // -------------------------------------------------------------------------
+  const MUSIC_REPEAT_TEXT = Object.freeze({ NONE: '关', ALL: '全部', ONE: '单曲' });
+  const MUSIC_TOASTS = Object.freeze({ shuffle: '已打乱待播顺序' });
+
+  const musicRow = (q) => {
+    const li = el('li');
+    const b = el('button', `music-row${q.current ? ' current' : ''}`);
+    if (q.current) b.setAttribute('aria-current', 'true');
+    if (q.thumb) {
+      const img = el('img');
+      img.src = q.thumb;
+      img.alt = '';
+      b.append(img);
+    } else b.append(el('span', 'ph'));
+    const text = el('span', 'yt-text');
+    text.append(el('span', 't', q.title), el('span', 's', q.artist));
+    b.append(text);
+    if (q.duration) b.append(el('span', 'dur', q.duration));
+    b.addEventListener('click', () => {
+      if (q.current) return;
+      log.info('ui.music_queue', { index: q.index });
+      act(CMD.MUSIC_QUEUE_PLAY, { index: q.index });
+    });
+    li.append(b);
+    return li;
+  };
+
+  const renderMusic = () => {
+    const m = app.status === 'connected' && CRYt.isMusicUrl(app.url) ? app.music : null;
+    $('tab-play').classList.toggle('music-mode', Boolean(m));
+    $('musicPanel').hidden = !m;
+    $('musicControls').hidden = !m;
+    $('musicQueue').hidden = !m || m.queue.length === 0;
+    if (!m) {
+      app.musicQueueSig = null;
+      return;
+    }
+    $('musicTitle').textContent = m.title || '正在播放';
+    $('musicArtist').textContent = [m.artist, m.album].filter(Boolean).join(' · ');
+    if (m.art && $('musicArt').getAttribute('src') !== m.art) $('musicArt').src = m.art;
+    $('musicAd').hidden = !m.ad;
+    $('musicLike').setAttribute('aria-pressed', String(m.like === 'LIKE'));
+    $('musicDislike').setAttribute('aria-pressed', String(m.like === 'DISLIKE'));
+    $('musicRepeatText').textContent = MUSIC_REPEAT_TEXT[m.repeat] || '关';
+    $('musicRepeat').classList.toggle('on', m.repeat !== 'NONE');
+    $('musicRepeat').setAttribute('aria-label', `循环模式:${MUSIC_REPEAT_TEXT[m.repeat] || '关'},点一下切换`);
+    const sig = JSON.stringify(m.queue);
+    if (sig === app.musicQueueSig) return;
+    app.musicQueueSig = sig;
+    setChildren($('musicQueueList'), m.queue.map(musicRow));
+    // Keep the playing song in view (one row of context above it).
+    const cur = $('musicQueueList').querySelector('.music-row.current');
+    if (cur) $('musicQueue').scrollTop = Math.max(0, cur.offsetTop - $('musicQueue').offsetTop - 60);
+  };
+
+  document.querySelectorAll('button[data-music]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const action = b.dataset.music;
+      log.info('ui.music_control', { action });
+      const res = await act(CMD.MUSIC_CONTROL, { action });
+      if (res.ok && MUSIC_TOASTS[action]) toast(MUSIC_TOASTS[action], 'ok');
+    })
+  );
+
+  document.querySelectorAll('#ytChips button').forEach((b) => {
       const on = Boolean(root) && !nested && b.dataset.ytSection === root.section;
       b.classList.toggle('active', on);
       b.setAttribute('aria-selected', String(on));
@@ -966,15 +1040,18 @@
   };
 
   const ytOnState = () => {
-    // Q41: the TV shows YouTube -> open the YouTube tab, once per connection, only from the touchpad tab.
-    if (!app.ytAutoSwitched && CRYt.isYoutubeUrl(app.url)) {
+    // Q41: the TV shows YouTube -> the YouTube tab; YouTube Music -> the Play tab (its player).
+    // Once per connection, and only away from the touchpad tab.
+    const autoTab = CRYt.isMusicUrl(app.url) ? 'play' : CRYt.isYoutubeUrl(app.url) ? 'youtube' : null;
+    if (!app.ytAutoSwitched && autoTab) {
       app.ytAutoSwitched = true;
       if (app.tab === 'browse') {
-        log.info('tab.auto_switch', { to: 'youtube' });
-        switchTab('youtube');
+        log.info('tab.auto_switch', { to: autoTab });
+        switchTab(autoTab);
       }
     }
-    const videoId = CRYt.videoIdOf(app.url);
+    // "Up next" is YouTube's; YouTube Music shows its own queue instead.
+    const videoId = CRYt.isMusicUrl(app.url) ? null : CRYt.videoIdOf(app.url);
     if (videoId === app.upNext.videoId) return;
     app.upNext = { videoId, items: [] };
     renderUpNext();

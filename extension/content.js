@@ -307,23 +307,91 @@
 
   const withAdapter = (fn) => (a) => (adapter ? fn(a) : fail(ERR.NO_PLAYLIST));
 
-  // Summary for the phone's entry row and previous / next buttons; sent only when it changes.
-  let lastPlaylistSig = null;
-  const pushPlaylistSummary = () => {
-    if (!adapter) return;
-    const { items, p, ranges, title } = readPlaylist();
-    const summary = items.length ? CRPlay.summarize(p, ranges, title) : null;
-    const sig = JSON.stringify(summary);
-    if (sig === lastPlaylistSig) return;
-    lastPlaylistSig = sig;
-    log.debug('playlist.summary', { current: summary && summary.current, total: summary && summary.total, has_prev: summary && summary.hasPrev, has_next: summary && summary.hasNext });
-    chrome.runtime.sendMessage({ type: 'playlistState', summary }).catch(() => {});
+  // -------------------------------------------------------------------------
+  // YouTube Music player (design 3.13.14): raw page data -> CRMusic.musicState; player-bar clicks
+  // -------------------------------------------------------------------------
+  const musicSite = isTop && CRMusic.isMusicHost(location.hostname);
+  const MUSIC_SETTLE_MS = 400; // the page needs a moment to reflect a click before the next summary
+
+  const readMusicRaw = () => {
+    const S = CRMusic.SITE;
+    const text = (root, sel) => {
+      const el = root.querySelector(sel);
+      return el ? el.textContent : '';
+    };
+    const items = [...document.querySelectorAll(S.queueItem)].map((it) => {
+      const img = it.querySelector('img');
+      return { title: text(it, S.itemTitle), artist: text(it, S.itemArtist), duration: text(it, S.itemDuration), thumb: img && img.src ? img.src : null, selected: it.hasAttribute('selected'), automix: it.hasAttribute('is-automix') };
+    });
+    const bar = document.querySelector(S.bar);
+    const like = document.querySelector(S.likeRenderer);
+    const player = document.querySelector(S.adPlayer);
+    const md = navigator.mediaSession && navigator.mediaSession.metadata;
+    return {
+      items,
+      barTitle: text(document, S.barTitle),
+      barByline: text(document, S.barByline),
+      session: md ? { title: md.title, artist: md.artist, album: md.album, artwork: [...(md.artwork || [])].map((a) => ({ src: a.src, sizes: a.sizes })) } : null,
+      ad: Boolean(player && player.classList.contains(S.adClass)),
+      likeStatus: like ? like.getAttribute('like-status') : null,
+      repeatMode: bar ? bar.getAttribute('repeat-mode') : null,
+    };
   };
+
+  const clickMusic = (el, what, fields) => {
+    if (!el) {
+      log.warn('music.not_found', { what, ...fields }); // selector no longer matches: YouTube Music changed
+      return fail(ERR.NO_MUSIC);
+    }
+    el.click();
+    setTimeout(pushSummaries, MUSIC_SETTLE_MS);
+    return ok();
+  };
+  const musicControl = ({ action }) => {
+    const res = clickMusic(document.querySelector(CRMusic.CONTROL_SELECTORS[action]), action, { action });
+    log.info('music.control', { action, ok: res.ok });
+    return res;
+  };
+  const musicQueuePlay = ({ index }) => {
+    const item = document.querySelectorAll(CRMusic.SITE.queueItem)[index];
+    const res = clickMusic(item && item.querySelector(CRMusic.SITE.itemPlay), 'queue_play', { index });
+    log.info('music.queue_play', { index, ok: res.ok, title: item ? (item.querySelector(CRMusic.SITE.itemTitle) || {}).textContent : null });
+    return res;
+  };
+  const withMusic = (fn) => (a) => (musicSite ? fn(a) : fail(ERR.NO_MUSIC));
+
+  // -------------------------------------------------------------------------
+  // Page summaries for the phone, sent only when they change (one channel, keyed by kind).
+  // A source returns undefined when it does not apply to this site, null for "nothing now".
+  // -------------------------------------------------------------------------
+  const SUMMARY_SOURCES = Object.freeze({
+    playlist: () => {
+      if (!adapter) return undefined;
+      const { items, p, ranges, title } = readPlaylist();
+      return items.length ? CRPlay.summarize(p, ranges, title) : null;
+    },
+    music: () => (musicSite ? CRMusic.musicState(readMusicRaw()) : undefined),
+  });
+  const lastSummarySig = {};
+  const pushSummaries = () =>
+    Object.keys(SUMMARY_SOURCES).forEach((kind) => {
+      const summary = SUMMARY_SOURCES[kind]();
+      if (summary === undefined) return;
+      const sig = JSON.stringify(summary);
+      if (sig === lastSummarySig[kind]) return;
+      lastSummarySig[kind] = sig;
+      log.debug(`${kind}.summary`, kind === 'music'
+        ? { current: summary && summary.current, total: summary && summary.total, ad: summary && summary.ad }
+        : { current: summary && summary.current, total: summary && summary.total, has_prev: summary && summary.hasPrev, has_next: summary && summary.hasNext });
+      chrome.runtime.sendMessage({ type: 'pageSummary', kind, summary }).catch(() => {});
+    });
 
   const PAGE_ACTIONS = Object.freeze({
     [CMD.PLAYLIST_GET]: withAdapter(playlistGet),
     [CMD.PLAYLIST_OPEN]: withAdapter((a) => openEpisode(a, 'list')),
     [CMD.PLAYLIST_STEP]: withAdapter(playlistStep),
+    [CMD.MUSIC_CONTROL]: withMusic(musicControl),
+    [CMD.MUSIC_QUEUE_PLAY]: withMusic(musicQueuePlay),
     [CMD.MOVE]: (a) => movePointer(a),
     [CMD.CLICK]: () => clickAtPointer(),
     [CMD.SCROLL]: (a) => scrollBy(a.dy),
@@ -462,7 +530,7 @@
   let hadVideo = false;
   const stateTimer = setInterval(() => {
     try {
-      pushPlaylistSummary();
+      pushSummaries();
       const v = findVideo();
       if (!v && !hadVideo) return;
       hadVideo = Boolean(v);

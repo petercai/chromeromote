@@ -289,3 +289,32 @@ button.danger { background: var(--danger); color: #fff; font-weight: 600; }
 .no-flex-gap .yt-list > * + * { margin-top: 6px; }
 .no-flex-gap .yt-card > * + * { margin-left: 12px; }
 .no-flex-gap .yt-text > * + *, .no-flex-gap .yt-state > * + * { margin-top: 4px; }
+
+/* ---- 1.0.26: YouTube Music on the Play tab (design 3.13.14, mockup M1) ---- */
+/* Music mode hides the video-only rows; the music rows use [hidden] like the rest. */
+#tab-play.music-mode .title-row, #tab-play.music-mode .transport, #tab-play.music-mode #fullscreen,
+#tab-play.music-mode #upNext, #tab-play.music-mode #playlistRow { display: none; }
+.music-panel[hidden], .music-controls[hidden], .music-ad[hidden] { display: none; }
+.music-panel { flex: none; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.music-art-wrap { position: relative; width: min(52vw, 220px); height: min(52vw, 220px); }
+.music-art { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; background: #262626; display: block; }
+.music-ad { position: absolute; left: 8px; top: 8px; padding: 2px 8px; border-radius: 6px; background: var(--accent); color: #000; font-size: 12px; font-weight: 600; }
+.music-meta { align-self: stretch; display: flex; align-items: center; gap: 8px; }
+.music-text { flex: 1; min-width: 0; }
+.music-title { margin: 0; font-size: 19px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-artist { margin: 2px 0 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-thumb { min-width: 44px; width: 44px; min-height: 44px; height: 44px; border-radius: 22px; color: var(--text-dim); }
+.music-thumb[aria-pressed="true"] { color: var(--accent); background: #2a1f14; }
+.music-controls { flex: none; display: flex; justify-content: space-between; align-items: center; }
+.music-controls button { background: transparent; }
+.music-controls button.primary { background: var(--accent); }
+.music-side { min-width: 48px; width: 56px; color: var(--text-dim); }
+.music-side small { font-size: 11px; }
+.music-side.on { color: var(--accent); }
+.music-row { width: 100%; min-height: 56px; flex-direction: row; justify-content: flex-start; gap: 12px; padding: 4px 6px; background: transparent; text-align: left; font-size: 14px; }
+.music-row.current { background: #2a1f14; }
+.music-row.current .t { color: var(--accent); }
+.music-row img, .music-row .ph { width: 44px; height: 44px; flex: none; border-radius: 6px; object-fit: cover; background: #262626; }
+.music-row .dur { flex: none; font-size: 12px; color: var(--text-dim); }
+.no-flex-gap .music-panel > * + * { margin-top: 10px; }
+.no-flex-gap .music-meta > * + *, .no-flex-gap .music-row > * + * { margin-left: 10px; }

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Android phone remote for Chrome on Chromebook: MV3 extension + WebRTC (PeerJS) + PWA.",
   "scripts": {
-    "test": "node --test tests/protocol.test.js tests/library.test.js tests/playlist.test.js tests/remote-compat.test.js tests/youtube.test.js",
+    "test": "node --test tests/protocol.test.js tests/library.test.js tests/playlist.test.js tests/remote-compat.test.js tests/youtube.test.js tests/music.test.js",
     "e2e": "node tests/e2e/run.mjs",
     "bump": "node scripts/bump-version.mjs",
     "pack": "node scripts/pack-extension.mjs"

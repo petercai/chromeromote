@@ -218,7 +218,21 @@ Browse YouTube on the phone and play on the TV, without the pointer. Chrome on t
 - If the lists stop loading after a YouTube update, the extension log shows `yt.request` (did the request
   work?) and `yt.parsed` (`unknown` > 0 means YouTube changed its data format; the fix goes in
   `extension/lib/youtube.js`).
-- No search and no YouTube Music player yet (design doc 3.13.10 lists the next phases).
+- No search yet (design doc 3.13.10 lists the next phases).
+
+## YouTube Music (1.0.26)
+
+When the TV plays music on **music.youtube.com**, the **播放** (Play) tab turns into a music player:
+
+- Large album art, song, artist (and album), **喜欢 / 不喜欢** (like / dislike).
+- Seek bar and volume as for videos; **随机** (shuffle the queue once), previous, play / pause, next,
+  **循环** (repeat: 关 off → 全部 all → 单曲 one).
+- **待播** (Up next): the queue around the current song; tap a song to play it now.
+- If the TV is on YouTube Music when the phone connects, the phone opens on the Play tab.
+- During an ad, the phone still shows the song that comes next, with an orange **广告** badge.
+- If the buttons stop working after a YouTube Music update, the extension log shows `music.not_found` with the
+  control that no longer matches; the selectors are in `extension/lib/music.js`.
+- Starting music from the phone (library, mixes, liked songs) is the next phase; for now start it on the TV.
 
 ## Version number: is GitHub serving my latest code?
 

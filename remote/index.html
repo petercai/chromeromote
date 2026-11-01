@@ -17,7 +17,7 @@
     <link rel="apple-touch-icon" href="icons/icon-180.png" />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icons/icon-192.png" type="image/png" />
-    <link rel="stylesheet" href="style.css?v=1.0.25" />
+    <link rel="stylesheet" href="style.css?v=1.0.26" />
   </head>
   <body>
     <!-- Top status bar: connection dot + WHICH Chromebook (tap to switch) -->
@@ -62,6 +62,21 @@
           <span id="playlistInfo" class="pl-info"></span>
           <svg class="pl-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
         </button>
+        <!-- YouTube Music (design 3.13.14, mockup M1): shown instead of the video title row on music.youtube.com -->
+        <section id="musicPanel" class="music-panel" hidden aria-label="正在播放的歌曲">
+          <div class="music-art-wrap">
+            <img id="musicArt" class="music-art" alt="" />
+            <span id="musicAd" class="music-ad" hidden>广告</span>
+          </div>
+          <div class="music-meta">
+            <div class="music-text">
+              <h2 id="musicTitle" class="music-title"></h2>
+              <p id="musicArtist" class="dim music-artist"></p>
+            </div>
+            <button id="musicDislike" class="music-thumb" data-music="dislike" aria-label="不喜欢" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 15v4a3 3 0 003 3l4-9V2H6l-2 10v1a2 2 0 002 2z"></path></svg></button>
+            <button id="musicLike" class="music-thumb" data-music="like" aria-label="喜欢" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11l2-10v-1a2 2 0 00-2-2z"></path></svg></button>
+          </div>
+        </section>
         <div class="seek">
           <input id="seek" type="range" min="0" max="1000" value="0" disabled aria-label="进度" />
           <div class="times"><span id="cur">--:--</span><span id="dur">--:--</span></div>
@@ -78,6 +93,13 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 5l10 7-10 7zM19 5v14"></path></svg>
           </button>
         </div>
+        <div id="musicControls" class="music-controls" hidden>
+          <button data-music="shuffle" class="music-side" aria-label="打乱待播顺序"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"></path></svg><small>随机</small></button>
+          <button data-music="previous" aria-label="上一首"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 5L9 12l10 7zM5 5v14"></path></svg></button>
+          <button data-cmd="playPause" class="needs-video primary" aria-label="播放或暂停">▶</button>
+          <button data-music="next" aria-label="下一首"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 5l10 7-10 7zM19 5v14"></path></svg></button>
+          <button id="musicRepeat" data-music="repeat" class="music-side" aria-label="循环模式"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 1l4 4-4 4"></path><path d="M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4"></path><path d="M21 13v2a4 4 0 01-4 4H3"></path></svg><small id="musicRepeatText">关</small></button>
+        </div>
         <div class="volume">
           <span aria-hidden="true">🔈</span>
           <input id="volume" type="range" min="0" max="100" value="100" disabled aria-label="音量" />
@@ -88,6 +110,10 @@
         <section id="upNext" class="up-next" hidden aria-label="接下来播放">
           <h3 class="up-next-head">接下来播放</h3>
           <ul id="upNextList" class="yt-list"></ul>
+        </section>
+        <section id="musicQueue" class="up-next" hidden aria-label="待播">
+          <h3 class="up-next-head">待播 · 点一首直接播放</h3>
+          <ul id="musicQueueList" class="yt-list"></ul>
         </section>
       </section>
 
@@ -236,12 +262,12 @@
     <!-- Toast (error = red, ok = green) -->
     <div id="toast" class="toast" hidden></div>
 
-    <script src="../extension/lib/version.js?v=1.0.25"></script>
-    <script src="../extension/vendor/peerjs.min.js?v=1.0.25"></script>
-    <script src="../extension/lib/protocol.js?v=1.0.25"></script>
-    <script src="../extension/lib/log.js?v=1.0.25"></script>
-    <script src="../extension/lib/youtube.js?v=1.0.25"></script>
-    <script src="../extension/lib/library.js?v=1.0.25"></script>
-    <script src="app.js?v=1.0.25"></script>
+    <script src="../extension/lib/version.js?v=1.0.26"></script>
+    <script src="../extension/vendor/peerjs.min.js?v=1.0.26"></script>
+    <script src="../extension/lib/protocol.js?v=1.0.26"></script>
+    <script src="../extension/lib/log.js?v=1.0.26"></script>
+    <script src="../extension/lib/youtube.js?v=1.0.26"></script>
+    <script src="../extension/lib/library.js?v=1.0.26"></script>
+    <script src="app.js?v=1.0.26"></script>
   </body>
 </html>
