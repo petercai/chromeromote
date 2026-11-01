@@ -542,6 +542,46 @@ const YOUTUBE_ACTIONS = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
+// Page zoom (design 3.14, option A). Chrome keeps zoom per site ("per-origin" scope), so iyf.tv stays
+// enlarged on every iyf.tv page and next time, on this Chromebook only. Levels: CR.ZOOM_LEVELS.
+// ---------------------------------------------------------------------------
+const zoomByTab = new Map(); // tabId -> factor; kept fresh by onZoomChange
+
+/** The tab's zoom factor (cached; 1 when Chrome can't tell, e.g. the tab is gone). */
+const zoomOf = async (tabId) => {
+  if (zoomByTab.has(tabId)) return zoomByTab.get(tabId);
+  const factor = await chrome.tabs.getZoom(tabId).catch(() => 1);
+  zoomByTab.set(tabId, factor);
+  return factor;
+};
+
+/** zoom {step} / {reset}: one Chrome level up / down, or back to 100%. Replies with the factor now in effect. */
+const zoomTab = async (tab, { step, reset }) => {
+  const from = await chrome.tabs.getZoom(tab.id);
+  const to = reset ? 1 : CR.stepZoom(from, step);
+  const origin = (() => {
+    try {
+      return new URL(tab.url).origin;
+    } catch (_) {
+      return null;
+    }
+  })();
+  if (Math.abs(to - from) < 0.001) {
+    log.debug('zoom.unchanged', { tab_id: tab.id, zoom: from, step: step || null, reset: Boolean(reset) });
+    return ok({ zoom: from });
+  }
+  try {
+    await chrome.tabs.setZoom(tab.id, to);
+  } catch (e) {
+    log.warn('zoom.failed', { tab_id: tab.id, origin, from, to, error: String(e && e.message) });
+    return fail(ERR.NO_ZOOM, { reason: String(e && e.message) });
+  }
+  zoomByTab.set(tab.id, to);
+  log.info('zoom.set', { tab_id: tab.id, origin, from, to, source: 'phone' });
+  return ok({ zoom: to });
+};
+
+// ---------------------------------------------------------------------------
 // Executors (each returns {ok, errorCode, data}; never throws)
 // ---------------------------------------------------------------------------
 const BROWSER_ACTIONS = Object.freeze({
@@ -551,6 +591,7 @@ const BROWSER_ACTIONS = Object.freeze({
   [CMD.RELOAD]: (tab) => chrome.tabs.reload(tab.id).then(() => ok()),
   [CMD.HOME]: (tab) => chrome.tabs.update(tab.id, { url: DEFAULT_HOME_URL }).then(() => ok()),
   [CMD.FULLSCREEN]: (tab) => toggleFullscreen(tab),
+  [CMD.ZOOM]: (tab, args) => zoomTab(tab, args),
   [CMD.PING]: () => Promise.resolve(ok({ ts: Date.now() })),
 });
 
@@ -558,7 +599,10 @@ const runBrowser = (tab, msg) => BROWSER_ACTIONS[msg.cmd](tab, msg.args || {});
 
 // Page commands only make sense in the top frame (pointer overlay lives there).
 const runPage = async (tab, msg) => {
-  const result = await sendToTab(tab.id, { type: 'exec', msg }, { frameId: 0 });
+  // The pointer moves in CSS pixels: tell the page its zoom so a finger stroke covers the same
+  // screen distance at any zoom (design 3.14.2).
+  const sent = msg.cmd === CMD.MOVE ? { ...msg, args: { ...msg.args, zoom: await zoomOf(tab.id) } } : msg;
+  const result = await sendToTab(tab.id, { type: 'exec', msg: sent }, { frameId: 0 });
   return result || fail(ERR.NO_TARGET);
 };
 
@@ -605,7 +649,7 @@ const executeCommand = async (msg, clientId) => {
 const forwardVideoState = async (state, sender) => {
   const tab = await getTargetTab();
   if (!tab || !sender.tab || sender.tab.id !== tab.id) return;
-  sendToOffscreen({ type: 'state', state: { ...state, title: tab.title || '', url: tab.url || '', ...summariesOf(tab.id), ts: Date.now() } });
+  sendToOffscreen({ type: 'state', state: { ...state, title: tab.title || '', url: tab.url || '', ...summariesOf(tab.id), zoom: await zoomOf(tab.id), ts: Date.now() } });
   // Library side effects never block or break state forwarding.
   lastVideoByTab.set(tab.id, state);
   recordRecent(tab, state).catch((e) => log.warn('library.recent_failed', { error: String(e) }));
@@ -616,7 +660,17 @@ const forwardVideoState = async (state, sender) => {
 // Reset the phone's view when the user switches tab or navigates.
 const announceNoVideo = async () => {
   const tab = await getTargetTab();
-  sendToOffscreen({ type: 'state', state: { hasVideo: false, title: tab ? tab.title : '', url: tab ? tab.url : '', ts: Date.now() } });
+  sendToOffscreen({ type: 'state', state: { hasVideo: false, title: tab ? tab.title : '', url: tab ? tab.url : '', zoom: tab ? await zoomOf(tab.id) : 1, ts: Date.now() } });
+};
+
+/** The TV tab's zoom changed (from the phone or on the Chromebook): the phone shows the new value. */
+const onZoomChanged = async ({ tabId, oldZoomFactor, newZoomFactor }) => {
+  zoomByTab.set(tabId, newZoomFactor);
+  const tab = await getTargetTab();
+  log.debug('zoom.changed', { tab_id: tabId, from: oldZoomFactor, to: newZoomFactor, target: Boolean(tab && tab.id === tabId) });
+  if (!tab || tab.id !== tabId) return;
+  const video = lastVideoByTab.get(tabId);
+  sendToOffscreen({ type: 'state', state: { ...(video || { hasVideo: false }), title: tab.title || '', url: tab.url || '', ...summariesOf(tabId), zoom: newZoomFactor, ts: Date.now() } });
 };
 
 // ---------------------------------------------------------------------------
@@ -827,9 +881,12 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   });
 });
 chrome.tabs.onActivated.addListener(() => announceNoVideo());
+chrome.tabs.onZoomChange.addListener((info) => onZoomChanged(info).catch((e) => log.warn('zoom.push_failed', { error: String(e) })));
+chrome.tabs.onRemoved.addListener((tabId) => zoomByTab.delete(tabId));
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.status === 'loading') {
     lastSummariesByTab.delete(tabId); // the new page's content script pushes its own summaries
+    zoomByTab.delete(tabId); // another site may have its own saved zoom: read it again
     announceNoVideo();
   }
 });

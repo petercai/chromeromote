@@ -37,6 +37,9 @@
   const YT_MORE_SCREENS = 3; // load the next page when fewer than this many screens remain below
   const LONG_PRESS_MS = 500;
   const LONG_PRESS_MOVE_PX = 10;
+  // Zoom stepper (design 3.14): holding A+ / A− keeps stepping after ZOOM_HOLD_MS, every ZOOM_REPEAT_MS.
+  const ZOOM_HOLD_MS = 450;
+  const ZOOM_REPEAT_MS = 400;
   const MAX_MISSED_PINGS = 2;
   const STORAGE = Object.freeze({
     pairings: 'cr.pairings',
@@ -76,6 +79,7 @@
     [ERR.YT_SIGNED_OUT]: '请先在 Chromebook 的 Chrome 里登录 YouTube',
     [ERR.YT_FAILED]: 'YouTube 读取失败',
     [ERR.NO_MUSIC]: '没有找到 YouTube Music 的播放器(页面可能改版了)',
+    [ERR.NO_ZOOM]: '这个页面不能缩放(Chrome 内部页面)',
   });
 
   // This page's version; the extension's comes with WELCOME (app.pairing.version).
@@ -185,6 +189,8 @@
     ytMenu: null, // card whose long-press menu is open
     ytAutoSwitched: false, // the TV-on-YouTube auto switch happens once per connection (Q41)
     upNext: { videoId: null, items: [] },
+    zoom: 1, // the TV tab's page zoom, pushed with the state (design 3.14)
+    zoomBusy: false, // one zoom command at a time: each step starts from the factor the last one set
     music: null, // YouTube Music now-playing summary pushed with the video state (design 3.13.14)
     musicQueueSig: null, // queue list is rebuilt only when this changes
     plSheet: null, // {loading, data, error} while the episode sheet is open
@@ -321,6 +327,63 @@
     renderSwitcher();
     renderYtNow();
     renderMusic();
+    renderZoom();
+  };
+
+  // Zoom stepper: the number is what Chrome reports; orange + "点按恢复" while not at 100%.
+  const renderZoom = () => {
+    const on = app.status === 'connected';
+    const pct = CR.zoomPercent(app.zoom);
+    const zoomed = pct !== 100;
+    $('zoomText').textContent = `${pct}%`;
+    $('zoomHint').textContent = zoomed ? '点按恢复' : '原始大小';
+    $('zoomReset').classList.toggle('zoomed', zoomed);
+    $('zoomReset').setAttribute('aria-label', zoomed ? `网页缩放 ${pct}%,点按恢复 100%` : '网页缩放 100%');
+    $('zoomReset').disabled = !on || !zoomed;
+    // stepZoom stays put at either end of Chrome's range: that button is greyed out.
+    $('zoomOut').disabled = !on || CR.stepZoom(app.zoom, -1) === app.zoom;
+    $('zoomIn').disabled = !on || CR.stepZoom(app.zoom, 1) === app.zoom;
+  };
+
+  /** One zoom step (or reset); skipped while the previous one is still on its way. */
+  const zoom = async (args) => {
+    if (app.zoomBusy || app.status !== 'connected') return;
+    app.zoomBusy = true;
+    log.info('ui.zoom', { ...args, from: app.zoom });
+    const res = await act(CMD.ZOOM, args);
+    app.zoomBusy = false;
+    if (res.ok && res.data && typeof res.data.zoom === 'number') app.zoom = res.data.zoom;
+    renderZoom();
+  };
+
+  /** Tap = one step; hold = keep stepping until released (or the end of the range disables the button). */
+  const onHoldRepeat = (el, fn) => {
+    let timer = null;
+    let held = false;
+    const stop = () => {
+      clearTimeout(timer);
+      clearInterval(timer);
+      timer = null;
+    };
+    const start = () => {
+      stop();
+      held = false;
+      timer = setTimeout(() => {
+        held = true;
+        fn();
+        timer = setInterval(() => (el.disabled ? stop() : fn()), ZOOM_REPEAT_MS);
+      }, ZOOM_HOLD_MS);
+    };
+    el.addEventListener('touchstart', start, { passive: true });
+    el.addEventListener('mousedown', start);
+    ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach((type) => el.addEventListener(type, stop));
+    el.addEventListener('click', () => {
+      if (held) {
+        held = false; // the hold already stepped: no extra step on release
+        return;
+      }
+      fn();
+    });
   };
 
   const switchTab = (tab) => {
@@ -379,6 +442,7 @@
     app.playlist = state.playlist || null;
     app.music = state.music || null;
     app.url = state.url || app.url;
+    if (typeof state.zoom === 'number') app.zoom = state.zoom;
     // New page on the TV: refresh the library once so the ★ reflects this page.
     const key = entryKey(app.url);
     if (key && key !== app.libKey) refreshLibrary();
@@ -1307,6 +1371,8 @@
   };
 
   document.querySelectorAll('button[data-cmd]').forEach((btn) => btn.addEventListener('click', () => onButton(btn)));
+  document.querySelectorAll('button[data-zoom-step]').forEach((btn) => onHoldRepeat(btn, () => zoom({ step: Number(btn.dataset.zoomStep) })));
+  $('zoomReset').addEventListener('click', () => zoom({ reset: true }));
   document.querySelectorAll('.tabbar button').forEach((btn) => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
   document.querySelectorAll('.segment button').forEach((btn) =>
     btn.addEventListener('click', () => {

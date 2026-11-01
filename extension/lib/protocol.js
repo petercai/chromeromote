@@ -19,6 +19,7 @@
     RELOAD: 'reload',
     HOME: 'home',
     FULLSCREEN: 'fullscreen',
+    ZOOM: 'zoom', // page zoom of the TV's tab: {step: 1 | -1} or {reset: true} (design 3.14)
     // Watch library (service worker, chrome.storage.local)
     LIBRARY_LIST: 'libraryList',
     BOOKMARK_ADD: 'bookmarkAdd',
@@ -53,7 +54,7 @@
   });
 
   const BROWSER_CMDS = Object.freeze([
-    CMD.BACK, CMD.FORWARD, CMD.RELOAD, CMD.HOME, CMD.FULLSCREEN, CMD.PING,
+    CMD.BACK, CMD.FORWARD, CMD.RELOAD, CMD.HOME, CMD.FULLSCREEN, CMD.ZOOM, CMD.PING,
     CMD.LIBRARY_LIST, CMD.BOOKMARK_ADD, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE, CMD.OPEN_ENTRY,
   ]);
   const PAGE_CMDS = Object.freeze([
@@ -111,6 +112,7 @@
     YT_SIGNED_OUT: 'YT_SIGNED_OUT', // a signed-in YouTube section answered as anonymous: sign in on the Chromebook
     YT_FAILED: 'YT_FAILED', // YouTube request failed or its data was not understood (data.reason says why)
     NO_MUSIC: 'NO_MUSIC', // the page is not a YouTube Music player (or its controls were not found)
+    NO_ZOOM: 'NO_ZOOM', // Chrome refused to zoom this page (chrome:// pages, the web store, …)
     PEER_UNAVAILABLE: 'PEER_UNAVAILABLE',
     TIMEOUT: 'TIMEOUT',
     INTERNAL: 'INTERNAL',
@@ -201,6 +203,7 @@
       (a.cursor === undefined || (typeof a.cursor === 'string' && a.cursor.length > 0 && a.cursor.length <= YT_CURSOR_MAX))
         ? null
         : ERR.BAD_MESSAGE,
+    [CMD.ZOOM]: (a) => ((a.step === 1 || a.step === -1) !== (a.reset === true) ? null : ERR.BAD_MESSAGE),
     [CMD.YT_UP_NEXT]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),
     [CMD.MUSIC_CONTROL]: (a) => (MUSIC_ACTIONS.includes(a.action) ? null : ERR.BAD_MESSAGE),
     [CMD.MUSIC_QUEUE_PLAY]: (a) => (Number.isInteger(a.index) && a.index >= 0 && a.index < MUSIC_QUEUE_MAX ? null : ERR.BAD_MESSAGE),
@@ -281,6 +284,21 @@
     return { peerId, key };
   };
 
+  // Chrome's own zoom levels (Ctrl + / Ctrl −), so the phone and the keyboard step through the same values.
+  const ZOOM_LEVELS = Object.freeze([0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5]);
+  const ZOOM_EPSILON = 0.005; // factors read back from Chrome are not exact (0.6666…)
+  /**
+   * Next level up (step 1) or down (step -1) from any factor, also one between levels (e.g. 1.15 after
+   * a pinch on the Chromebook's touchpad). At either end it stays where it is.
+   */
+  const stepZoom = (current, step) => {
+    const next = step > 0
+      ? ZOOM_LEVELS.find((z) => z > current + ZOOM_EPSILON)
+      : ZOOM_LEVELS.slice().reverse().find((z) => z < current - ZOOM_EPSILON);
+    return next === undefined ? current : next;
+  };
+  const zoomPercent = (factor) => Math.round(factor * 100);
+
   /** Compare dotted numeric versions: -1 if a<b, 0 if equal, 1 if a>b. Missing parts count as 0. */
   const compareVersions = (a, b) => {
     const pa = String(a || '0').split('.').map(Number);
@@ -356,6 +374,9 @@
     parsePairHash,
     formatTime,
     compareVersions,
+    ZOOM_LEVELS,
+    stepZoom,
+    zoomPercent,
     releaseZipUrl,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

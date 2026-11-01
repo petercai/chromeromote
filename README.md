@@ -131,6 +131,11 @@ phone you want to keep.
    scroll. The buttons are Back, Reload, Home (site.com), Page up and Page down.
 4. When a video starts, the phone switches to the **Play** tab by itself. It has play/pause, −10 / +10
    / +30 s, a seek slider (the video jumps when you let go), a volume slider and fullscreen.
+5. **Page zoom** (1.0.30), on the **iyf.tv** tab under the touchpad: **A+** / **A−** zoom the TV's page one
+   Chrome level (hold to keep going), the number in the middle is the current zoom, and tapping it goes back to
+   **100%**. Orange means "not 100%". Chrome remembers the zoom per site and per machine, so iyf.tv can stay at
+   150% on the TV and at 80% on a small laptop. Ctrl + / Ctrl − on the Chromebook show up on the phone too.
+   Chrome's own pages (`chrome://…`) cannot be zoomed ("这个页面不能缩放").
 
 ## Troubleshooting
 

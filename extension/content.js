@@ -94,7 +94,8 @@
   // -------------------------------------------------------------------------
   // Virtual pointer (top frame only)
   // -------------------------------------------------------------------------
-  const pointer = { x: window.innerWidth / 2, y: window.innerHeight / 2, el: null, hideTimer: null };
+  // zoom: the tab's page zoom, sent with every move by the service worker (design 3.14).
+  const pointer = { x: window.innerWidth / 2, y: window.innerHeight / 2, el: null, hideTimer: null, zoom: 1 };
 
   const ensurePointerEl = () => {
     if (pointer.el && document.documentElement.contains(pointer.el)) return pointer.el;
@@ -124,7 +125,8 @@
 
   const renderPointer = () => {
     const el = ensurePointerEl();
-    el.style.transform = `translate(${pointer.x}px, ${pointer.y}px)`;
+    // Counter-scale so the pointer looks the same size on the TV at any page zoom.
+    el.style.transform = `translate(${pointer.x}px, ${pointer.y}px)${pointer.zoom === 1 ? '' : ` scale(${1 / pointer.zoom})`}`;
     el.style.opacity = '1';
     clearTimeout(pointer.hideTimer);
     pointer.hideTimer = setTimeout(() => {
@@ -140,9 +142,12 @@
     }, 150);
   };
 
-  const movePointer = ({ dx, dy }) => {
-    pointer.x = clamp(pointer.x + dx, 0, window.innerWidth - 1);
-    pointer.y = clamp(pointer.y + dy, 0, window.innerHeight - 1);
+  // A move is in screen pixels; at page zoom z one CSS pixel covers z screen pixels, so divide by z:
+  // the finger-to-pointer speed on the TV stays the same however far the page is zoomed.
+  const movePointer = ({ dx, dy, zoom }) => {
+    pointer.zoom = typeof zoom === 'number' && zoom > 0 ? zoom : pointer.zoom;
+    pointer.x = clamp(pointer.x + dx / pointer.zoom, 0, window.innerWidth - 1);
+    pointer.y = clamp(pointer.y + dy / pointer.zoom, 0, window.innerHeight - 1);
     renderPointer();
     return ok();
   };

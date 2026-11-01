@@ -323,3 +323,12 @@ button.danger { background: var(--danger); color: #fff; font-weight: 600; }
 #ytSource { flex: none; }
 /* Music artwork is square (songs, albums, playlists); same row height as a video card */
 .yt-thumb-square { width: 76px; }
+
+/* ---- 1.0.30: page zoom stepper on the iyf.tv tab (design 3.14, option A) ---- */
+.zoom-bar { flex: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); }
+.zoom-bar button { min-height: 48px; height: 48px; font-size: 18px; font-weight: 600; }
+.zoom-bar small { margin-top: 0; font-weight: 400; }
+/* The value cell: the number, and "tap to reset" once the page is zoomed (orange = not original size) */
+.zoom-value #zoomText { font-size: 18px; font-variant-numeric: tabular-nums; }
+.zoom-value.zoomed #zoomText { color: var(--accent); }
+.zoom-value.zoomed small { color: var(--accent); }
