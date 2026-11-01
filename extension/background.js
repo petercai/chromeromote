@@ -247,16 +247,23 @@ const toggleFullscreen = async (tab) => {
   return setFullscreen(tab, win.state !== 'fullscreen');
 };
 
-// A page opened "to play full screen" (ytOpen) has no video yet: fill it once the video reports.
+// A page opened "to play full screen" (ytOpen) has no video yet: fill it once ITS video reports.
+// The page being left can still report its own video during the navigation; that state must not
+// consume the pending fill (iteration 23), so the pending entry names the video it is for and only a
+// state sent from a frame showing that video applies it.
 const pendingFillKey = (tabId) => `pendingFill:${tabId}`;
-const applyPendingFill = async (tab, state) => {
+const applyPendingFill = async (tab, state, senderUrl) => {
   if (!state.hasVideo) return;
   const key = pendingFillKey(tab.id);
   const { [key]: pending } = await chrome.storage.session.get(key);
   if (!pending) return;
+  if (CRYt.videoIdOf(senderUrl) !== pending.videoId) {
+    log.debug('fullscreen.fill_wait', { tab_id: tab.id, video_id: pending.videoId, sender_url: String(senderUrl || '').slice(0, 80) });
+    return;
+  }
   await chrome.storage.session.remove(key);
   await sendToTab(tab.id, { type: 'fill', on: true });
-  log.info('fullscreen.fill_applied', { tab_id: tab.id, after_ms: Date.now() - pending });
+  log.info('fullscreen.fill_applied', { tab_id: tab.id, video_id: pending.videoId, after_ms: Date.now() - pending.at });
 };
 
 // ---------------------------------------------------------------------------
@@ -498,7 +505,7 @@ const ytOpen = async (tab, { videoId, playlistId }) => {
     first = firstVideo.id;
   }
   const url = CRYt.watchUrl({ videoId: first, playlistId });
-  await chrome.storage.session.set({ [pendingFillKey(tab.id)]: Date.now() });
+  await chrome.storage.session.set({ [pendingFillKey(tab.id)]: { at: Date.now(), videoId: first } });
   await chrome.tabs.update(tab.id, { url, active: true });
   await setFullscreen(tab, true).catch((e) => log.warn('yt.fullscreen_failed', { tab_id: tab.id, error: String(e) }));
   log.info('yt.open', { video_id: first, playlist_id: playlistId || null, tab_id: tab.id });
@@ -589,7 +596,7 @@ const forwardVideoState = async (state, sender) => {
   lastVideoByTab.set(tab.id, state);
   recordRecent(tab, state).catch((e) => log.warn('library.recent_failed', { error: String(e) }));
   applyPendingSeek(tab, state).catch((e) => log.warn('library.resume_failed', { error: String(e) }));
-  applyPendingFill(tab, state).catch((e) => log.warn('fullscreen.fill_failed', { tab_id: tab.id, error: String(e) }));
+  applyPendingFill(tab, state, sender.url).catch((e) => log.warn('fullscreen.fill_failed', { tab_id: tab.id, error: String(e) }));
 };
 
 // Reset the phone's view when the user switches tab or navigates.

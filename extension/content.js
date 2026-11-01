@@ -334,6 +334,11 @@
   // -------------------------------------------------------------------------
   // In-page fill ("web fullscreen") — paired with window fullscreen in the worker
   // -------------------------------------------------------------------------
+  // position:fixed + max z-index only wins if NO ancestor forms a stacking context or containing block:
+  // otherwise the video only outranks its own player, and page siblings with a higher z-index (e.g.
+  // YouTube's sticky sidebar chips over #movie_player) paint on top of it. So every ancestor is tagged,
+  // stripped of the properties that create those contexts, and raised to the max as well.
+  const FILL_ANCESTOR = `${FILL_CLASS}-ancestor`;
   const FILL_CSS = `
     .${FILL_CLASS} {
       position: fixed !important; inset: 0 !important;
@@ -342,8 +347,33 @@
       margin: 0 !important; z-index: ${Z_MAX} !important;
       background: #000 !important; object-fit: contain !important;
     }
+    .${FILL_ANCESTOR} {
+      transform: none !important; filter: none !important; perspective: none !important;
+      contain: none !important; will-change: auto !important; isolation: auto !important;
+      opacity: 1 !important; clip-path: none !important; mask: none !important; -webkit-mask: none !important;
+      z-index: ${Z_MAX} !important;
+    }
     html.${FILL_CLASS}-root, html.${FILL_CLASS}-root body { overflow: hidden !important; }
   `;
+
+  // Ancestors up to <html>, crossing shadow roots (custom-element players).
+  const ancestorsOf = (el) => {
+    const out = [];
+    let cur = el.parentElement || (el.getRootNode && el.getRootNode().host) || null;
+    while (cur && cur !== document.documentElement) {
+      out.push(cur);
+      cur = cur.parentElement || (cur.getRootNode && cur.getRootNode().host) || null;
+    }
+    return out;
+  };
+
+  /** Would this element (before neutralizing) trap a fixed / z-indexed descendant? For the fill log only. */
+  const formsContext = (el) => {
+    const s = getComputedStyle(el);
+    return s.transform !== 'none' || s.filter !== 'none' || s.perspective !== 'none' || (s.contain && s.contain !== 'none') ||
+      (s.position !== 'static' && s.zIndex !== 'auto') || Number(s.opacity) < 1 || s.isolation === 'isolate' ||
+      /transform|opacity|filter/.test(s.willChange || '');
+  };
 
   const ensureFillStyle = () => {
     if (document.getElementById(`${FILL_CLASS}-style`)) return;
@@ -364,13 +394,16 @@
 
   const setFill = (on) => {
     ensureFillStyle();
-    document.querySelectorAll(`.${FILL_CLASS}`).forEach((el) => el.classList.remove(FILL_CLASS));
+    document.querySelectorAll(`.${FILL_CLASS}, .${FILL_ANCESTOR}`).forEach((el) => el.classList.remove(FILL_CLASS, FILL_ANCESTOR));
     document.documentElement.classList.toggle(`${FILL_CLASS}-root`, on);
     if (!on) return;
     const target = fillTarget();
     if (!target) return;
+    const ancestors = ancestorsOf(target);
+    const neutralized = ancestors.filter(formsContext).slice(0, 5).map(describe);
+    ancestors.forEach((a) => a.classList.add(FILL_ANCESTOR));
     target.classList.add(FILL_CLASS);
-    log.info('fill.applied', { target: describe(target) });
+    log.info('fill.applied', { target: describe(target), ancestors: ancestors.length, neutralized });
   };
 
   // -------------------------------------------------------------------------
