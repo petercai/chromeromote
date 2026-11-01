@@ -926,73 +926,7 @@
     const view = ytCurrent();
     const root = app.yt[0];
     const nested = app.yt.length > 1;
-    // -------------------------------------------------------------------------
-  // YouTube Music on the Play tab (design 3.13.14): the TV's player, read by the extension
-  // -------------------------------------------------------------------------
-  const MUSIC_REPEAT_TEXT = Object.freeze({ NONE: '关', ALL: '全部', ONE: '单曲' });
-  const MUSIC_TOASTS = Object.freeze({ shuffle: '已打乱待播顺序' });
-
-  const musicRow = (q) => {
-    const li = el('li');
-    const b = el('button', `music-row${q.current ? ' current' : ''}`);
-    if (q.current) b.setAttribute('aria-current', 'true');
-    if (q.thumb) {
-      const img = el('img');
-      img.src = q.thumb;
-      img.alt = '';
-      b.append(img);
-    } else b.append(el('span', 'ph'));
-    const text = el('span', 'yt-text');
-    text.append(el('span', 't', q.title), el('span', 's', q.artist));
-    b.append(text);
-    if (q.duration) b.append(el('span', 'dur', q.duration));
-    b.addEventListener('click', () => {
-      if (q.current) return;
-      log.info('ui.music_queue', { index: q.index });
-      act(CMD.MUSIC_QUEUE_PLAY, { index: q.index });
-    });
-    li.append(b);
-    return li;
-  };
-
-  const renderMusic = () => {
-    const m = app.status === 'connected' && CRYt.isMusicUrl(app.url) ? app.music : null;
-    $('tab-play').classList.toggle('music-mode', Boolean(m));
-    $('musicPanel').hidden = !m;
-    $('musicControls').hidden = !m;
-    $('musicQueue').hidden = !m || m.queue.length === 0;
-    if (!m) {
-      app.musicQueueSig = null;
-      return;
-    }
-    $('musicTitle').textContent = m.title || '正在播放';
-    $('musicArtist').textContent = [m.artist, m.album].filter(Boolean).join(' · ');
-    if (m.art && $('musicArt').getAttribute('src') !== m.art) $('musicArt').src = m.art;
-    $('musicAd').hidden = !m.ad;
-    $('musicLike').setAttribute('aria-pressed', String(m.like === 'LIKE'));
-    $('musicDislike').setAttribute('aria-pressed', String(m.like === 'DISLIKE'));
-    $('musicRepeatText').textContent = MUSIC_REPEAT_TEXT[m.repeat] || '关';
-    $('musicRepeat').classList.toggle('on', m.repeat !== 'NONE');
-    $('musicRepeat').setAttribute('aria-label', `循环模式:${MUSIC_REPEAT_TEXT[m.repeat] || '关'},点一下切换`);
-    const sig = JSON.stringify(m.queue);
-    if (sig === app.musicQueueSig) return;
-    app.musicQueueSig = sig;
-    setChildren($('musicQueueList'), m.queue.map(musicRow));
-    // Keep the playing song in view (one row of context above it).
-    const cur = $('musicQueueList').querySelector('.music-row.current');
-    if (cur) $('musicQueue').scrollTop = Math.max(0, cur.offsetTop - $('musicQueue').offsetTop - 60);
-  };
-
-  document.querySelectorAll('button[data-music]').forEach((b) =>
-    b.addEventListener('click', async () => {
-      const action = b.dataset.music;
-      log.info('ui.music_control', { action });
-      const res = await act(CMD.MUSIC_CONTROL, { action });
-      if (res.ok && MUSIC_TOASTS[action]) toast(MUSIC_TOASTS[action], 'ok');
-    })
-  );
-
-  document.querySelectorAll('#ytChips button').forEach((b) => {
+    document.querySelectorAll('#ytChips button').forEach((b) => {
       const on = Boolean(root) && !nested && b.dataset.ytSection === root.section;
       b.classList.toggle('active', on);
       b.setAttribute('aria-selected', String(on));
@@ -1062,6 +996,72 @@
       renderUpNext();
     });
   };
+
+  // -------------------------------------------------------------------------
+  // YouTube Music on the Play tab (design 3.13.14): the TV's player, read by the extension
+  // -------------------------------------------------------------------------
+  const MUSIC_REPEAT_TEXT = Object.freeze({ NONE: '关', ALL: '全部', ONE: '单曲' });
+  const MUSIC_TOASTS = Object.freeze({ shuffle: '已打乱待播顺序' });
+
+  const musicRow = (q) => {
+    const li = el('li');
+    const b = el('button', `music-row${q.current ? ' current' : ''}`);
+    if (q.current) b.setAttribute('aria-current', 'true');
+    if (q.thumb) {
+      const img = el('img');
+      img.src = q.thumb;
+      img.alt = '';
+      b.append(img);
+    } else b.append(el('span', 'ph'));
+    const text = el('span', 'yt-text');
+    text.append(el('span', 't', q.title), el('span', 's', q.artist));
+    b.append(text);
+    if (q.duration) b.append(el('span', 'dur', q.duration));
+    b.addEventListener('click', () => {
+      if (q.current) return;
+      log.info('ui.music_queue', { index: q.index });
+      act(CMD.MUSIC_QUEUE_PLAY, { index: q.index });
+    });
+    li.append(b);
+    return li;
+  };
+
+  const renderMusic = () => {
+    const m = app.status === 'connected' && CRYt.isMusicUrl(app.url) ? app.music : null;
+    $('tab-play').classList.toggle('music-mode', Boolean(m));
+    $('musicPanel').hidden = !m;
+    $('musicControls').hidden = !m;
+    $('musicQueue').hidden = !m || m.queue.length === 0;
+    if (!m) {
+      app.musicQueueSig = null;
+      return;
+    }
+    $('musicTitle').textContent = m.title || '正在播放';
+    $('musicArtist').textContent = [m.artist, m.album].filter(Boolean).join(' · ');
+    if (m.art && $('musicArt').getAttribute('src') !== m.art) $('musicArt').src = m.art;
+    $('musicAd').hidden = !m.ad;
+    $('musicLike').setAttribute('aria-pressed', String(m.like === 'LIKE'));
+    $('musicDislike').setAttribute('aria-pressed', String(m.like === 'DISLIKE'));
+    $('musicRepeatText').textContent = MUSIC_REPEAT_TEXT[m.repeat] || '关';
+    $('musicRepeat').classList.toggle('on', m.repeat !== 'NONE');
+    $('musicRepeat').setAttribute('aria-label', `循环模式:${MUSIC_REPEAT_TEXT[m.repeat] || '关'},点一下切换`);
+    const sig = JSON.stringify(m.queue);
+    if (sig === app.musicQueueSig) return;
+    app.musicQueueSig = sig;
+    setChildren($('musicQueueList'), m.queue.map(musicRow));
+    // Keep the playing song in view (one row of context above it).
+    const cur = $('musicQueueList').querySelector('.music-row.current');
+    if (cur) $('musicQueue').scrollTop = Math.max(0, cur.offsetTop - $('musicQueue').offsetTop - 60);
+  };
+
+  document.querySelectorAll('button[data-music]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const action = b.dataset.music;
+      log.info('ui.music_control', { action });
+      const res = await act(CMD.MUSIC_CONTROL, { action });
+      if (res.ok && MUSIC_TOASTS[action]) toast(MUSIC_TOASTS[action], 'ok');
+    })
+  );
 
   document.querySelectorAll('#ytChips button').forEach((b) => b.addEventListener('click', () => openYtRoot(b.dataset.ytSection)));
   $('ytBack').addEventListener('click', popYtView);
@@ -1457,6 +1457,7 @@
   globalThis.CRRemote = Object.freeze({
     send,
     status: () => app.status,
+    tv: () => ({ url: app.url, hasVideo: app.video.hasVideo, music: app.music ? { title: app.music.title, current: app.music.current, total: app.music.total } : null }),
     version: VERSION,
     devices: () => app.pairings.map((p) => ({ peerId: p.peerId, name: p.name, current: Boolean(app.pairing && p.peerId === app.pairing.peerId) })),
   });
