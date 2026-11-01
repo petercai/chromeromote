@@ -10,9 +10,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#121212" />
     <title>Chrome 遥控</title>
+    <!-- iOS home-screen app (iteration 20): full screen, own icon; iOS 12 ignores the manifest icons -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="遥控" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
     <link rel="manifest" href="manifest.webmanifest" />
-    <link rel="icon" href="icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="style.css?v=1.0.20" />
+    <link rel="icon" href="icons/icon-192.png" type="image/png" />
+    <link rel="stylesheet" href="style.css?v=1.0.23" />
   </head>
   <body>
     <!-- Top status bar: connection dot + WHICH Chromebook (tap to switch) -->
@@ -79,6 +84,37 @@
           <span id="volText" class="dim">--</span>
         </div>
         <button id="fullscreen" data-cmd="fullscreen" class="wide" aria-label="全屏">⛶ 全屏</button>
+        <!-- YouTube: what plays after this video (design 3.13.9); shown only for a YouTube video -->
+        <section id="upNext" class="up-next" hidden aria-label="接下来播放">
+          <h3 class="up-next-head">接下来播放</h3>
+          <ul id="upNextList" class="yt-list"></ul>
+        </section>
+      </section>
+
+      <!-- YouTube tab (design 3.13, option A): browse on the phone, the TV keeps playing until a card is tapped -->
+      <section id="tab-youtube" class="tab" aria-label="YouTube">
+        <div id="ytChips" class="yt-chips" role="tablist" aria-label="YouTube 分区">
+          <button role="tab" data-yt-section="home" class="active">首页</button>
+          <button role="tab" data-yt-section="subscriptions">订阅</button>
+          <button role="tab" data-yt-section="playlists">播放列表</button>
+          <button role="tab" data-yt-section="watchLater">稍后观看</button>
+        </div>
+        <div id="ytHead" class="yt-head" hidden>
+          <button id="ytBack" class="yt-back" aria-label="返回上一级">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+          </button>
+          <h2 id="ytTitle" class="yt-title"></h2>
+          <button id="ytPlayAll" class="yt-playall" hidden>▶ 全部播放</button>
+        </div>
+        <ul id="ytList" class="yt-list yt-scroll"></ul>
+        <div id="ytState" class="yt-state" hidden>
+          <p id="ytStatus" class="dim"></p>
+          <button id="ytRetry" class="yt-retry" hidden>重试</button>
+        </div>
+        <button id="ytNow" class="yt-now" hidden aria-label="电视上正在播放,点一下打开播放页">
+          <span class="yt-now-text"><small>电视上正在播放</small><span id="ytNowTitle"></span></span>
+          <span aria-hidden="true">›</span>
+        </button>
       </section>
 
       <!-- Library tab: recent (synced, last 10) + bookmarks -->
@@ -104,6 +140,7 @@
     <!-- Bottom tab bar -->
     <nav class="tabbar">
       <button data-tab="browse" class="active">浏览</button>
+      <button data-tab="youtube">YouTube</button>
       <button data-tab="play">播放</button>
       <button data-tab="library">片单</button>
     </nav>
@@ -127,6 +164,16 @@
           <button id="confirmCancel">取消</button>
           <button id="confirmOk" class="danger">删除</button>
         </div>
+      </section>
+    </div>
+
+    <!-- YouTube long-press menu (Q44): watch later / go to channel -->
+    <div id="ytMenu" class="sheet-backdrop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="ytMenuTitle">
+        <h2 id="ytMenuTitle" class="yt-menu-title"></h2>
+        <button id="ytMenuLater" class="wide sheet-item">加入稍后观看</button>
+        <button id="ytMenuChannel" class="wide sheet-item">打开频道</button>
+        <button id="ytMenuCancel" class="wide sheet-item">取消</button>
       </section>
     </div>
 
@@ -154,25 +201,47 @@
       <div>
         <h2 id="unpairedTitle">还没有配对</h2>
         <p class="dim">这个页面本身不能扫码。二维码显示在电视(Chromebook)上:</p>
-        <ol class="dim steps">
+        <ol id="stepsAndroid" class="dim steps">
           <li>在 Chromebook 上点击右上角的扩展图标"Chrome 遥控",弹出窗口里有二维码。</li>
           <li>打开手机<b>相机</b>(或 Google Lens),对准电视上的二维码,点击出现的链接。</li>
           <li>如果链接在 Google App 里打开,点 ⋮ →"在 Chrome 中打开"。</li>
           <li>显示"已连接"后,在 Chrome 菜单里选"添加到主屏幕",以后直接从主屏幕打开。</li>
+        </ol>
+        <ol id="stepsIos" class="dim steps" hidden>
+          <li>在 Chromebook 上点击右上角的扩展图标"Chrome 遥控",弹出窗口里有二维码。</li>
+          <li>打开 iPad <b>相机</b>,对准电视上的二维码,点顶部出现的通知,在 Safari 里打开。</li>
+          <li>点 Safari 的<b>分享</b>按钮 →"添加到主屏幕",以后从主屏幕上的"遥控"打开(全屏)。</li>
+          <li>以后再加一台 Chromebook:同样扫码,再添加一次到主屏幕(多出来的图标可以删掉)。</li>
         </ol>
         <p class="dim">版本 <span id="verOverlay"></span></p>
         <button id="closeHelp" class="wide" hidden>返回</button>
       </div>
     </div>
 
+    <!-- iOS Safari tab: the address bar carries the pairing, so "Add to Home Screen" saves it (iteration 20) -->
+    <div id="installHint" class="install-hint" hidden role="status">
+      <span>装成 App:点 Safari 的 <b>分享</b> →「添加到主屏幕」,以后从主屏幕打开(全屏,已带上配对)</span>
+      <button id="installHintClose" class="hint-close" aria-label="不再提示">✕</button>
+    </div>
+
+    <!-- No WebRTC here (possible in iOS 12 home-screen apps): fall back to Safari -->
+    <div id="noWebrtc" class="overlay no-webrtc" hidden>
+      <div>
+        <h2>这里不能建立遥控连接</h2>
+        <p class="dim">这个主屏幕 App(或浏览器)不支持 WebRTC,iOS 12 上可能出现这种情况。请在 Safari 里使用遥控,配对会一起带过去。</p>
+        <a id="openSafari" class="wide button-link" href="./" target="_blank" rel="noopener">在 Safari 中打开</a>
+      </div>
+    </div>
+
     <!-- Toast (error = red, ok = green) -->
     <div id="toast" class="toast" hidden></div>
 
-    <script src="../extension/lib/version.js?v=1.0.20"></script>
-    <script src="../extension/vendor/peerjs.min.js?v=1.0.20"></script>
-    <script src="../extension/lib/protocol.js?v=1.0.20"></script>
-    <script src="../extension/lib/log.js?v=1.0.20"></script>
-    <script src="../extension/lib/library.js?v=1.0.20"></script>
-    <script src="app.js?v=1.0.20"></script>
+    <script src="../extension/lib/version.js?v=1.0.23"></script>
+    <script src="../extension/vendor/peerjs.min.js?v=1.0.23"></script>
+    <script src="../extension/lib/protocol.js?v=1.0.23"></script>
+    <script src="../extension/lib/log.js?v=1.0.23"></script>
+    <script src="../extension/lib/youtube.js?v=1.0.23"></script>
+    <script src="../extension/lib/library.js?v=1.0.23"></script>
+    <script src="app.js?v=1.0.23"></script>
   </body>
 </html>

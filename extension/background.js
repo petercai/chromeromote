@@ -12,7 +12,7 @@
  * Message routing convention: every runtime message carries `target` ('bg' | 'offscreen')
  * or comes from a content script with `type` 'videoState'.
  */
-importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js', 'lib/library.js');
+importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js', 'lib/library.js', 'lib/youtube.js');
 
 const { CMD, ERR, TAB_NEED, ok, fail, executorOf, tabNeedOf, buildPairUrl, newKey, DEFAULT_HOME_URL } = CR;
 
@@ -227,20 +227,36 @@ const historyNavigate = async (tab, direction) => {
 // ---------------------------------------------------------------------------
 // Fullscreen: window fullscreen (no user gesture needed) + in-page video fill
 // ---------------------------------------------------------------------------
-const toggleFullscreen = async (tab) => {
+/** Window fullscreen on / off (restoring the previous state) + in-page video fill. */
+const setFullscreen = async (tab, on) => {
   const win = await chrome.windows.get(tab.windowId);
-  const entering = win.state !== 'fullscreen';
-  if (entering) {
-    await chrome.storage.session.set({ [`prevState:${win.id}`]: win.state });
-  }
   const restoreKey = `prevState:${win.id}`;
+  if (on && win.state !== 'fullscreen') await chrome.storage.session.set({ [restoreKey]: win.state });
   const { [restoreKey]: prev = 'maximized' } = await chrome.storage.session.get(restoreKey);
-  await chrome.windows.update(win.id, { state: entering ? 'fullscreen' : prev === 'fullscreen' ? 'maximized' : prev });
+  const target = on ? 'fullscreen' : prev === 'fullscreen' ? 'maximized' : prev;
+  if (win.state !== target) await chrome.windows.update(win.id, { state: target });
   // Fill is best-effort: the window fullscreen alone is still a useful result.
-  await sendToTab(tab.id, { type: 'fill', on: entering }).catch((e) =>
+  await sendToTab(tab.id, { type: 'fill', on }).catch((e) =>
     log.warn('fullscreen.fill_failed', { tab_id: tab.id, error: String(e) })
   );
-  return ok({ fullscreen: entering });
+  return ok({ fullscreen: on });
+};
+
+const toggleFullscreen = async (tab) => {
+  const win = await chrome.windows.get(tab.windowId);
+  return setFullscreen(tab, win.state !== 'fullscreen');
+};
+
+// A page opened "to play full screen" (ytOpen) has no video yet: fill it once the video reports.
+const pendingFillKey = (tabId) => `pendingFill:${tabId}`;
+const applyPendingFill = async (tab, state) => {
+  if (!state.hasVideo) return;
+  const key = pendingFillKey(tab.id);
+  const { [key]: pending } = await chrome.storage.session.get(key);
+  if (!pending) return;
+  await chrome.storage.session.remove(key);
+  await sendToTab(tab.id, { type: 'fill', on: true });
+  log.info('fullscreen.fill_applied', { tab_id: tab.id, after_ms: Date.now() - pending });
 };
 
 // ---------------------------------------------------------------------------
@@ -361,6 +377,150 @@ const LIBRARY_ACTIONS = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
+// YouTube catalog (design 3.13, option A). Requests go to InnerTube (the API youtube.com's own pages
+// call) from INSIDE a youtube.com tab's page world, so they carry the user's sign-in. That "data tab"
+// is any open youtube.com tab, else a background tab we open once; the TV's tab is never touched
+// while the phone browses (Q40). Parsing is pure (lib/youtube.js).
+// ---------------------------------------------------------------------------
+const YT_DATA_TAB_URL = `${CRYt.ORIGIN}/feed/you`;
+const YT_TAB_READY_MS = 15000;
+const YT_UP_NEXT_MAX = 20;
+let ytDataTabId = null; // last data tab; re-validated before each use
+
+/**
+ * Runs in the youtube.com page (world MAIN): one InnerTube POST with the page's own client config.
+ * Self-contained (serialized by chrome.scripting). Signed-in feeds need the SAPISIDHASH header:
+ * SHA-1 of "<ts> <SAPISID cookie> <origin>", as youtube.com computes it.
+ */
+async function innertubeInPage(endpoint, body, waitMs) {
+  const started = Date.now();
+  while (!(window.ytcfg && window.ytcfg.get && window.ytcfg.get('INNERTUBE_CONTEXT'))) {
+    if (Date.now() - started > waitMs) return { error: 'no_ytcfg' };
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  const cfg = window.ytcfg;
+  const headers = {
+    'content-type': 'application/json',
+    'x-youtube-client-name': String(cfg.get('INNERTUBE_CONTEXT_CLIENT_NAME') || 1),
+    'x-youtube-client-version': String(cfg.get('INNERTUBE_CLIENT_VERSION') || ''),
+    'x-origin': location.origin,
+    'x-goog-authuser': String(cfg.get('SESSION_INDEX') || 0),
+  };
+  const sapisid = (document.cookie.match(/(?:^|;\s*)(?:SAPISID|__Secure-3PAPISID)=([^;]+)/) || [])[1];
+  if (sapisid) {
+    const ts = Math.floor(Date.now() / 1000);
+    const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(`${ts} ${sapisid} ${location.origin}`));
+    headers.authorization = `SAPISIDHASH ${ts}_${Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')}`;
+  }
+  try {
+    const res = await fetch(`/youtubei/v1/${endpoint}?prettyPrint=false`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify({ context: cfg.get('INNERTUBE_CONTEXT'), ...body }),
+    });
+    return { status: res.status, json: await res.json().catch(() => null), auth: Boolean(sapisid) };
+  } catch (e) {
+    return { error: 'fetch_failed', message: String(e && e.message) };
+  }
+}
+
+const waitTabComplete = async (tabId) => {
+  const started = Date.now();
+  while (Date.now() - started < YT_TAB_READY_MS) {
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    if (!t) return false;
+    if (t.status === 'complete') return true;
+    await sleep(200);
+  }
+  return false;
+};
+
+/** A youtube.com tab to run requests in: the last one, any open one (background first), or a new background tab. */
+const ytDataTab = async () => {
+  const last = ytDataTabId === null ? null : await chrome.tabs.get(ytDataTabId).catch(() => null);
+  if (last && CRYt.isYoutubeUrl(last.url)) return last;
+  const open = await chrome.tabs.query({ url: `${CRYt.ORIGIN}/*` });
+  const pick = open.find((t) => !t.active) || open[0];
+  const target = await getTargetTab();
+  const tab = pick || (await chrome.tabs.create({ url: YT_DATA_TAB_URL, active: false, ...(target ? { windowId: target.windowId } : {}) }));
+  ytDataTabId = tab.id;
+  log.info('yt.data_tab', { action: pick ? 'reuse' : 'create', tab_id: tab.id, active: Boolean(tab.active) });
+  return tab;
+};
+
+/** One InnerTube call; ok(json) or fail(YT_FAILED, {reason}). */
+const ytRequest = async (endpoint, body, section) => {
+  const started = Date.now();
+  const tab = await ytDataTab();
+  if (!(await waitTabComplete(tab.id))) return fail(ERR.YT_FAILED, { reason: 'data_tab_not_ready' });
+  const [injection] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: innertubeInPage, args: [endpoint, body, YT_TAB_READY_MS] });
+  const r = (injection && injection.result) || { error: 'no_result' };
+  const reason = r.error || (r.status >= 400 ? `http_${r.status}` : !r.json ? 'bad_json' : null);
+  log[reason ? 'warn' : 'info']('yt.request', {
+    endpoint, section, tab_id: tab.id, status: r.status, auth: r.auth, reason, latency_ms: Date.now() - started,
+    logged_out: r.json ? CRYt.isLoggedOut(r.json) : null,
+  });
+  return reason ? fail(ERR.YT_FAILED, { reason }) : ok(r.json);
+};
+
+/** ytBrowse: a section's cards (a channel shows its Videos tab). */
+const ytBrowse = async (args) => {
+  const { section, id, cursor } = args;
+  let res = await ytRequest('browse', CRYt.browseRequest({ section, id, cursor }), section);
+  if (res.ok && section === CR.YT_SECTION.CHANNEL && !cursor) {
+    const params = CRYt.channelVideosParams(res.data);
+    if (params) res = await ytRequest('browse', { browseId: id, params }, section);
+  }
+  if (!res.ok) return res;
+  if (CRYt.needsSignIn(section) && CRYt.isLoggedOut(res.data)) return fail(ERR.YT_SIGNED_OUT);
+  const { items, cursor: next, stats } = CRYt.parseItems(res.data);
+  log[stats.unknown ? 'warn' : 'info']('yt.parsed', { section, items: items.length, ...stats, has_cursor: Boolean(next), page: cursor ? 'more' : 'first' });
+  return ok({ title: CRYt.titleOf(res.data), items, cursor: next });
+};
+
+const ytUpNext = async ({ videoId }) => {
+  const res = await ytRequest('next', { videoId }, 'upNext');
+  if (!res.ok) return res;
+  const items = CRYt.upNextItems(res.data, videoId).slice(0, YT_UP_NEXT_MAX);
+  log.info('yt.parsed', { section: 'upNext', items: items.length });
+  return ok({ items });
+};
+
+/** ytOpen: play on the TV, full screen (Q45); a bare playlist starts at its first video. */
+const ytOpen = async (tab, { videoId, playlistId }) => {
+  let first = videoId;
+  if (!first) {
+    const list = await ytBrowse({ section: CR.YT_SECTION.PLAYLIST, id: playlistId });
+    if (!list.ok) return list;
+    const firstVideo = list.data.items.find((c) => c.kind === 'video');
+    if (!firstVideo) return fail(ERR.YT_FAILED, { reason: 'empty_playlist' });
+    first = firstVideo.id;
+  }
+  const url = CRYt.watchUrl({ videoId: first, playlistId });
+  await chrome.storage.session.set({ [pendingFillKey(tab.id)]: Date.now() });
+  await chrome.tabs.update(tab.id, { url, active: true });
+  await setFullscreen(tab, true).catch((e) => log.warn('yt.fullscreen_failed', { tab_id: tab.id, error: String(e) }));
+  log.info('yt.open', { video_id: first, playlist_id: playlistId || null, tab_id: tab.id });
+  return ok({ url });
+};
+
+const ytWatchLater = async ({ videoId }) => {
+  const res = await ytRequest('browse/edit_playlist', { playlistId: 'WL', actions: [{ action: 'ACTION_ADD_VIDEO', addedVideoId: videoId }] }, 'watchLater');
+  const done = res.ok && res.data.status === 'STATUS_SUCCEEDED';
+  log[done ? 'info' : 'warn']('yt.watch_later', { video_id: videoId, ok: done, status: res.ok ? res.data.status : res.errorCode });
+  if (done) return ok();
+  return res.ok ? fail(CRYt.isLoggedOut(res.data) ? ERR.YT_SIGNED_OUT : ERR.YT_FAILED, { reason: String(res.data.status || 'not_saved') }) : res;
+};
+
+const YOUTUBE_ACTIONS = Object.freeze({
+  [CMD.YT_BROWSE]: (tab, args) => ytBrowse(args),
+  [CMD.YT_UP_NEXT]: (tab, args) => ytUpNext(args),
+  [CMD.YT_OPEN]: (tab, args) => ytOpen(tab, args),
+  [CMD.YT_WATCH_LATER]: (tab, args) => ytWatchLater(args),
+});
+
+// ---------------------------------------------------------------------------
 // Executors (each returns {ok, errorCode, data}; never throws)
 // ---------------------------------------------------------------------------
 const BROWSER_ACTIONS = Object.freeze({
@@ -390,7 +550,9 @@ const runVideo = async (tab, msg) => {
   return result || fail(ERR.NO_VIDEO);
 };
 
-const EXECUTORS = Object.freeze({ browser: runBrowser, page: runPage, video: runVideo });
+const runYoutube = (tab, msg) => YOUTUBE_ACTIONS[msg.cmd](tab, msg.args || {});
+
+const EXECUTORS = Object.freeze({ browser: runBrowser, page: runPage, video: runVideo, youtube: runYoutube });
 
 const executeCommand = async (msg, clientId) => {
   const started = Date.now();
@@ -427,6 +589,7 @@ const forwardVideoState = async (state, sender) => {
   lastVideoByTab.set(tab.id, state);
   recordRecent(tab, state).catch((e) => log.warn('library.recent_failed', { error: String(e) }));
   applyPendingSeek(tab, state).catch((e) => log.warn('library.resume_failed', { error: String(e) }));
+  applyPendingFill(tab, state).catch((e) => log.warn('fullscreen.fill_failed', { tab_id: tab.id, error: String(e) }));
 };
 
 // Reset the phone's view when the user switches tab or navigates.

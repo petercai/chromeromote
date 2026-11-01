@@ -11,6 +11,7 @@
 
   const { CMD, MSG, ERR, makeCmd, needsAck, parsePairHash, extractPairing, formatTime, newId, PROTOCOL_VERSION } = CR;
   const { entryKey } = CRLib;
+  const { YT_SECTION } = CR;
   const log = CRLog.createLogger('pwa');
 
   // -------------------------------------------------------------------------
@@ -31,8 +32,32 @@
   const TAP_MAX_MOVE_PX = 10;
   const SCROLL_GAIN = 3;
   const PROBE_TIMEOUT_MS = 6000;
+  // YouTube reads may first open the background data tab and wait for youtube.com to load (design 3.13.9).
+  const YT_ACK_TIMEOUT_MS = 20000;
+  const YT_MORE_SCREENS = 3; // load the next page when fewer than this many screens remain below
+  const LONG_PRESS_MS = 500;
+  const LONG_PRESS_MOVE_PX = 10;
   const MAX_MISSED_PINGS = 2;
-  const STORAGE = Object.freeze({ pairings: 'cr.pairings', current: 'cr.current', legacyPairing: 'cr.pairing', clientId: 'cr.clientId' });
+  const STORAGE = Object.freeze({
+    pairings: 'cr.pairings',
+    current: 'cr.current',
+    legacyPairing: 'cr.pairing',
+    clientId: 'cr.clientId',
+    launchLink: 'cr.launchLink', // iOS home-screen app: pairing link already imported (peerId:key)
+    installHintOff: 'cr.installHintOff', // iOS Safari: "Add to Home Screen" hint dismissed
+  });
+
+  // Runtime environment (iteration 20). iPad on iOS 12: no Pointer Events, and a home-screen app
+  // has its own storage (not Safari's) and possibly no WebRTC.
+  const ENV = Object.freeze({
+    ios: 'standalone' in navigator, // only iOS / iPadOS Safari defines navigator.standalone
+    homeScreenApp: navigator.standalone === true || Boolean(window.matchMedia && matchMedia('(display-mode: standalone)').matches),
+    pointerEvents: Boolean(window.PointerEvent),
+    webrtc: typeof RTCPeerConnection !== 'undefined',
+  });
+  // iOS Safari tab (not the home-screen app): the address bar must carry the pairing for "Add to Home Screen".
+  const IOS_SAFARI_TAB = ENV.ios && !ENV.homeScreenApp;
+  const pairingId = (p) => `${p.peerId}:${p.key}`;
 
   const ERROR_TEXT = Object.freeze({
     [ERR.NO_VIDEO]: '页面上没有找到视频',
@@ -48,6 +73,8 @@
     [ERR.INTERNAL]: '扩展内部错误',
     [ERR.BAD_MESSAGE]: '命令格式错误',
     [ERR.SYNC_FAILED]: '片单同步失败(Google 账号同步不可用或超出容量)',
+    [ERR.YT_SIGNED_OUT]: '请先在 Chromebook 的 Chrome 里登录 YouTube',
+    [ERR.YT_FAILED]: 'YouTube 读取失败',
   });
 
   const $ = (id) => document.getElementById(id);
@@ -94,6 +121,14 @@
     const fromUrl = direct || recovered;
     if (!fromUrl) return null;
     history.replaceState(null, '', location.pathname); // drop secrets (hash) and the one-off ?t= nonce
+    // iOS home-screen app: every launch opens the link saved at "Add to Home Screen". Import it once,
+    // so a pairing deleted (or denied) later is not re-added on the next launch.
+    if (ENV.ios && ENV.homeScreenApp) {
+      const seen = localStorage.getItem(STORAGE.launchLink) === pairingId(fromUrl);
+      log.info('pairing.launch_link', { peer_id: fromUrl.peerId, imported: !seen });
+      if (seen) return null;
+      localStorage.setItem(STORAGE.launchLink, pairingId(fromUrl));
+    }
     savePairings(upsertPairing(loadPairings(), { peerId: fromUrl.peerId, key: fromUrl.key }));
     setCurrentId(fromUrl.peerId);
     log.info('pairing.saved', { peer_id: fromUrl.peerId, key: CRLog.redact(fromUrl.key) });
@@ -125,9 +160,18 @@
     libKey: null, // entryKey of the page the library was last refreshed for
     confirm: null, // {title, body, run} while the delete sheet is open
     playlist: null, // episode-list summary pushed with the video state (design 3.11), null = none
+    // YouTube tab (design 3.13): a stack of views; each keeps its own cards, cursor and scroll position,
+    // so "back" restores the previous list instantly. Root views are the four sections.
+    yt: [],
+    ytSeq: 0, // request generation: replies for a view that is no longer shown are dropped
+    ytMenu: null, // card whose long-press menu is open
+    ytAutoSwitched: false, // the TV-on-YouTube auto switch happens once per connection (Q41)
+    upNext: { videoId: null, items: [] },
     plSheet: null, // {loading, data, error} while the episode sheet is open
     switcherOpen: false,
     showHelp: false, // "add Chromebook" instructions over a paired session
+    noWebrtc: null, // reason string when this browser / home-screen app cannot open WebRTC connections
+    installLink: null, // iOS Safari tab: pairing id currently written into the address bar
     probes: new Map(), // peerId -> resolver of an in-flight online probe
     probeResults: new Map(), // peerId -> 'online' | 'offline' | 'checking'
     peer: null,
@@ -224,19 +268,42 @@
     }
   };
 
+  /** Link that opens this page with the current pairing (home-screen start URL / Safari fallback). */
+  const pairingLink = (p) => (p ? CR.buildPairUrl({ baseUrl: location.origin + location.pathname, peerId: p.peerId, key: p.key }) : location.pathname);
+
+  // iOS home screen (iteration 20): Safari and the home-screen app do not share storage, so the
+  // Safari tab keeps the current pairing in its address bar; "Add to Home Screen" saves that link.
+  const renderInstall = () => {
+    if (IOS_SAFARI_TAB) {
+      const id = app.pairing ? pairingId(app.pairing) : null;
+      if (id !== app.installLink) {
+        app.installLink = id;
+        history.replaceState(null, '', pairingLink(app.pairing)); // replaceState: no hashchange event
+      }
+    }
+    const hint = IOS_SAFARI_TAB && Boolean(app.pairing) && !app.noWebrtc && !localStorage.getItem(STORAGE.installHintOff);
+    if (hint && $('installHint').hidden) log.info('pairing.install_hint', { peer_id: app.pairing.peerId });
+    $('installHint').hidden = !hint;
+    $('noWebrtc').hidden = !app.noWebrtc;
+    if (app.noWebrtc) $('openSafari').href = pairingLink(app.pairing);
+  };
+
   const render = () => {
+    renderInstall();
     renderStatus();
     renderVideo();
     renderPlaylist();
     renderBookmarkBtn();
     renderOffline();
     renderSwitcher();
+    renderYtNow();
   };
 
   const switchTab = (tab) => {
     app.tab = tab;
     // Library may have changed elsewhere (another phone, another synced Chromebook): refresh on view.
     if (tab === 'library' || tab === 'play') refreshLibrary();
+    if (tab === 'youtube') ensureYtLoaded();
     document.querySelectorAll('.tab').forEach((s) => s.classList.toggle('active', s.id === `tab-${tab}`));
     document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   };
@@ -295,6 +362,7 @@
       log.info('tab.auto_switch', { to: 'play' });
       switchTab('play');
     }
+    ytOnState();
     render();
   };
 
@@ -309,8 +377,10 @@
       app.pairing = app.pairings.find((p) => p.peerId === updated.peerId);
       savePairings(app.pairings);
       log.info('device.welcome', { peer_id: updated.peerId, name: updated.name, version: updated.version });
+      app.ytAutoSwitched = false;
       setStatus('connected');
       refreshLibrary();
+      if (app.tab === 'youtube') ensureYtLoaded();
       return;
     }
     if (data.type === MSG.DENIED) {
@@ -337,12 +407,21 @@
     if (data.type === MSG.STATE) onStateMessage(data.state || {});
   };
 
+  /** No WebRTC here (seen in iOS 12 home-screen apps): stop retrying, offer the page in Safari. */
+  const webrtcUnavailable = (reason) => {
+    log.error('webrtc.unavailable', { reason, ios: ENV.ios, home_screen_app: ENV.homeScreenApp });
+    teardown();
+    app.noWebrtc = reason;
+    setStatus('error', '这个浏览器不支持 WebRTC');
+  };
+
   const connect = () => {
     teardown();
     if (!app.pairing) {
       setStatus('idle');
       return;
     }
+    if (!ENV.webrtc) return webrtcUnavailable('no_rtcpeerconnection');
     setStatus('connecting');
     const peer = new Peer({ debug: 1, config: { iceServers: CR.ICE_SERVERS } });
     app.peer = peer;
@@ -390,6 +469,7 @@
         return;
       }
       log.error('peer.error', { type: err.type, error: String(err) });
+      if (err.type === 'browser-incompatible') return webrtcUnavailable(err.type); // retrying cannot help
       if (err.type === 'peer-unavailable') {
         // Current device offline (F29): show the offline screen, keep retrying, never auto-switch.
         setStatus('offline', deviceLabel(app.pairing));
@@ -402,6 +482,8 @@
   };
 
   const SLOW_CMDS = Object.freeze([CMD.PLAYLIST_GET, CMD.PLAYLIST_OPEN, CMD.PLAYLIST_STEP]);
+  const YT_CMDS = Object.freeze([CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_OPEN, CMD.YT_WATCH_LATER]);
+  const ackTimeoutOf = (cmd) => (YT_CMDS.includes(cmd) ? YT_ACK_TIMEOUT_MS : SLOW_CMDS.includes(cmd) ? SLOW_ACK_TIMEOUT_MS : ACK_TIMEOUT_MS);
 
   /** Send a command; resolves with the reply (or a synthetic TIMEOUT reply). Never rejects. */
   const send = (cmd, args = {}) => {
@@ -414,7 +496,7 @@
         app.pending.delete(msg.cmd_id);
         log.warn('cmd.timeout', { cmd, cmd_id: msg.cmd_id });
         resolve({ ok: false, error_code: ERR.TIMEOUT });
-      }, SLOW_CMDS.includes(cmd) ? SLOW_ACK_TIMEOUT_MS : ACK_TIMEOUT_MS);
+      }, ackTimeoutOf(cmd));
       app.pending.set(msg.cmd_id, { resolve, timer, sentAt: Date.now() });
     });
   };
@@ -509,6 +591,12 @@
     return n;
   };
 
+  // Element.replaceChildren needs Safari 14; iOS 12 (iPad) is a target, so clear + append.
+  const setChildren = (parent, nodes) => {
+    parent.textContent = '';
+    parent.append(...nodes);
+  };
+
   const libraryRow = (entry, kind) => {
     const li = el('li', 'lib-row');
     const open = el('button', 'lib-open');
@@ -540,7 +628,7 @@
     $('segBookmarks').classList.toggle('active', kind === 'bookmarks');
     $('segRecent').textContent = `最近 ${app.library.recent.length}`;
     $('segBookmarks').textContent = `收藏 ${app.library.bookmarks.length}`;
-    $('libList').replaceChildren(...items.map((e) => libraryRow(e, kind)));
+    setChildren($('libList'), items.map((e) => libraryRow(e, kind)));
     $('libEmpty').hidden = items.length > 0;
     $('libEmpty').textContent = kind === 'recent' ? '还没有观看记录(看 15 秒以上会自动记录)' : '还没有收藏,在播放页点 ☆ 收藏';
   };
@@ -612,8 +700,9 @@
     $('plStatus').textContent = sheet.loading ? '正在读取选集…' : sheet.error || '';
     const ranges = d ? d.ranges : [];
     $('plRanges').hidden = ranges.length < 2;
-    $('plRanges').replaceChildren(
-      ...ranges.map((r) => {
+    setChildren(
+      $('plRanges'),
+      ranges.map((r) => {
         const b = el('button', r.index === d.viewRange ? 'active' : '', r.label);
         b.setAttribute('role', 'tab');
         b.setAttribute('aria-selected', String(r.index === d.viewRange));
@@ -625,10 +714,10 @@
     const sps = d && !sheet.loading ? d.specials : [];
     $('plEpisodesHead').hidden = eps.length === 0;
     $('plEpisodesHead').textContent = `正片 ${eps.length} 集`;
-    $('plGrid').replaceChildren(...eps.map((ep) => episodeChip(ep, ep.id === currentId, d.viewRange)));
+    setChildren($('plGrid'), eps.map((ep) => episodeChip(ep, ep.id === currentId, d.viewRange)));
     $('plSpecialsHead').hidden = sps.length === 0;
     $('plSpecialsHead').textContent = `特别篇 ${sps.length}`;
-    $('plSpecials').replaceChildren(...sps.map((sp) => specialRow(sp, sp.id === currentId, d.viewRange)));
+    setChildren($('plSpecials'), sps.map((sp) => specialRow(sp, sp.id === currentId, d.viewRange)));
   };
 
   /** Fetch the list (optionally another range); keeps the previous data visible while loading. */
@@ -669,6 +758,266 @@
 
   // Same rule as CRPlay.isEpisodeLabel in the extension (the phone does not load lib/playlist.js).
   const isEpisodeLabel = (label) => /^\d+$/.test(String(label || '').trim());
+
+  // -------------------------------------------------------------------------
+  // YouTube tab (design 3.13, option A): browse on the phone, the TV changes only when a card is
+  // tapped (Q40). Cards come from the extension (ytBrowse); thumbnails load straight from i.ytimg.com.
+  // -------------------------------------------------------------------------
+  const YT_ROOT_TITLES = Object.freeze({
+    [YT_SECTION.HOME]: '首页',
+    [YT_SECTION.SUBSCRIPTIONS]: '订阅',
+    [YT_SECTION.PLAYLISTS]: '播放列表',
+    [YT_SECTION.WATCH_LATER]: '稍后观看',
+  });
+  const YT_EMPTY_TEXT = Object.freeze({
+    [YT_SECTION.WATCH_LATER]: '稍后观看是空的(长按视频可以加入)',
+    [YT_SECTION.PLAYLISTS]: '还没有播放列表',
+  });
+
+  const ytView = (section, id = null, title = null) => ({ section, id, title, items: [], cursor: null, loading: false, error: null, loaded: false, scrollTop: 0 });
+  const ytCurrent = () => app.yt[app.yt.length - 1] || null;
+
+  /** Load the first page of the current view (more = the next page). Never runs two loads for one view. */
+  const loadYt = async ({ more = false } = {}) => {
+    const view = ytCurrent();
+    if (!view || view.loading || app.status !== 'connected' || (more && !view.cursor)) return;
+    const seq = (app.ytSeq += 1);
+    view.loading = true;
+    view.error = null;
+    renderYt();
+    log.info(more ? 'ui.yt_more' : 'ui.yt_section', { section: view.section, id: view.id, loaded: view.items.length });
+    const args = { section: view.section, ...(view.id ? { id: view.id } : {}), ...(more ? { cursor: view.cursor } : {}) };
+    const res = await send(CMD.YT_BROWSE, args);
+    view.loading = false;
+    if (res.ok) {
+      view.items = more ? view.items.concat(res.data.items) : res.data.items;
+      view.cursor = res.data.cursor || null;
+      view.title = view.title || res.data.title || null;
+      view.loaded = true;
+    } else {
+      view.error = res.error_code;
+      log.warn('ui.yt_failed', { section: view.section, error_code: res.error_code, reason: res.data && res.data.reason });
+    }
+    if (seq === app.ytSeq || ytCurrent() === view) renderYt();
+  };
+
+  const ensureYtLoaded = () => {
+    if (!app.yt.length) app.yt = [ytView(YT_SECTION.HOME)];
+    const view = ytCurrent();
+    if (!view.loaded && !view.loading) loadYt();
+    else renderYt();
+  };
+
+  const openYtRoot = (section) => {
+    app.yt = [ytView(section)];
+    $('ytList').scrollTop = 0;
+    loadYt();
+  };
+
+  const pushYtView = (section, id, title) => {
+    const cur = ytCurrent();
+    if (cur) cur.scrollTop = $('ytList').scrollTop;
+    app.yt = app.yt.concat([ytView(section, id, title)]);
+    $('ytList').scrollTop = 0;
+    loadYt();
+  };
+
+  const popYtView = () => {
+    if (app.yt.length < 2) return;
+    app.yt = app.yt.slice(0, -1);
+    renderYt();
+    $('ytList').scrollTop = ytCurrent().scrollTop; // back = where you were
+  };
+
+  /** Tap a card: a video plays on the TV (inside a playlist: continuing through it); a playlist opens on the phone. */
+  const openYtCard = async (c, view) => {
+    if (c.kind === 'playlist') return pushYtView(YT_SECTION.PLAYLIST, c.id, c.title);
+    log.info('ui.yt_open', { video_id: c.id, from: view ? view.section : 'upNext' });
+    const res = await act(CMD.YT_OPEN, { videoId: c.id, ...(view && view.section === YT_SECTION.PLAYLIST ? { playlistId: view.id } : {}) });
+    if (!res.ok) return;
+    toast(`正在电视上打开:${c.title}`, 'ok');
+    switchTab('play');
+  };
+
+  /** Long press (touch) or context menu (Android long press / mouse right click) without a click afterwards. */
+  const onLongPress = (el, fn) => {
+    let timer = null;
+    let start = null;
+    const cancel = () => {
+      clearTimeout(timer);
+      timer = null;
+    };
+    el.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      start = { x: t.clientX, y: t.clientY };
+      cancel();
+      timer = setTimeout(() => {
+        timer = null;
+        el.dataset.longPressed = '1';
+        fn();
+      }, LONG_PRESS_MS);
+    }, { passive: true });
+    el.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      if (start && Math.abs(t.clientX - start.x) + Math.abs(t.clientY - start.y) > LONG_PRESS_MOVE_PX) cancel();
+    }, { passive: true });
+    el.addEventListener('touchend', cancel);
+    el.addEventListener('touchcancel', cancel);
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (el.dataset.longPressed === '1') return; // the touch timer already fired
+      el.dataset.longPressed = '1';
+      fn();
+    });
+  };
+
+  const ytCard = (c, view) => {
+    const li = el('li');
+    const b = el('button', 'yt-card');
+    const thumb = el('span', 'yt-thumb');
+    if (c.thumb) {
+      const img = el('img');
+      img.src = c.thumb;
+      img.alt = '';
+      img.loading = 'lazy';
+      thumb.append(img);
+    }
+    const badge = c.kind === 'playlist' ? c.count : c.duration;
+    if (badge) thumb.append(el('span', 'yt-badge', badge));
+    if (c.progress) {
+      const bar = el('span', 'yt-progress');
+      bar.style.width = `${c.progress}%`;
+      thumb.append(bar);
+    }
+    const text = el('span', 'yt-text');
+    text.append(el('span', 't', c.title));
+    const sub = c.kind === 'playlist' ? ['播放列表', c.channel, c.meta] : [c.channel, c.meta];
+    text.append(el('span', 's', sub.filter(Boolean).join(' · ')));
+    b.append(thumb, text);
+    b.addEventListener('click', () => {
+      if (b.dataset.longPressed === '1') {
+        b.dataset.longPressed = '';
+        return;
+      }
+      openYtCard(c, view);
+    });
+    if (c.kind === 'video') onLongPress(b, () => openYtMenu(c));
+    li.append(b);
+    return li;
+  };
+
+  const ytStatusText = (view) => {
+    if (view.loading && !view.items.length) return '正在读取…';
+    if (view.loading) return '正在读取更多…';
+    if (view.error) return ERROR_TEXT[view.error] || `读取失败:${view.error}`;
+    if (view.loaded && !view.items.length) return YT_EMPTY_TEXT[view.section] || '这里还没有视频';
+    return '';
+  };
+
+  const renderYt = () => {
+    const view = ytCurrent();
+    const root = app.yt[0];
+    const nested = app.yt.length > 1;
+    document.querySelectorAll('#ytChips button').forEach((b) => {
+      const on = Boolean(root) && !nested && b.dataset.ytSection === root.section;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', String(on));
+    });
+    $('ytChips').hidden = nested;
+    $('ytHead').hidden = !nested;
+    if (!view) {
+      setChildren($('ytList'), []);
+      $('ytState').hidden = true;
+      return;
+    }
+    $('ytTitle').textContent = view.title || YT_ROOT_TITLES[view.section] || '';
+    $('ytPlayAll').hidden = !(view.section === YT_SECTION.PLAYLIST && view.items.some((c) => c.kind === 'video'));
+    setChildren($('ytList'), view.items.map((c) => ytCard(c, view)));
+    const status = ytStatusText(view);
+    $('ytState').hidden = !status;
+    $('ytStatus').textContent = status;
+    $('ytRetry').hidden = !view.error;
+  };
+
+  // "Playing on the TV" bar: a shortcut back to the Play tab while browsing.
+  const renderYtNow = () => {
+    const show = videoAvailable();
+    $('ytNow').hidden = !show;
+    if (show) $('ytNowTitle').textContent = app.title || '正在播放';
+  };
+
+  const openYtMenu = (c) => {
+    log.info('ui.yt_longpress', { video_id: c.id });
+    app.ytMenu = c;
+    $('ytMenuTitle').textContent = c.title;
+    $('ytMenuChannel').disabled = !c.channelId;
+    $('ytMenu').hidden = false;
+  };
+  const closeYtMenu = () => {
+    app.ytMenu = null;
+    $('ytMenu').hidden = true;
+  };
+
+  // Play tab "Up next": refreshed when the TV's YouTube video changes, never on every state push.
+  const renderUpNext = () => {
+    const items = app.status === 'connected' && CRYt.videoIdOf(app.url) ? app.upNext.items : [];
+    $('upNext').hidden = items.length === 0;
+    setChildren($('upNextList'), items.map((c) => ytCard(c, null)));
+  };
+
+  const ytOnState = () => {
+    // Q41: the TV shows YouTube -> open the YouTube tab, once per connection, only from the touchpad tab.
+    if (!app.ytAutoSwitched && CRYt.isYoutubeUrl(app.url)) {
+      app.ytAutoSwitched = true;
+      if (app.tab === 'browse') {
+        log.info('tab.auto_switch', { to: 'youtube' });
+        switchTab('youtube');
+      }
+    }
+    const videoId = CRYt.videoIdOf(app.url);
+    if (videoId === app.upNext.videoId) return;
+    app.upNext = { videoId, items: [] };
+    renderUpNext();
+    if (!videoId) return;
+    send(CMD.YT_UP_NEXT, { videoId }).then((res) => {
+      if (app.upNext.videoId !== videoId) return; // the TV moved on meanwhile
+      if (res.ok) app.upNext = { videoId, items: res.data.items };
+      renderUpNext();
+    });
+  };
+
+  document.querySelectorAll('#ytChips button').forEach((b) => b.addEventListener('click', () => openYtRoot(b.dataset.ytSection)));
+  $('ytBack').addEventListener('click', popYtView);
+  $('ytRetry').addEventListener('click', () => loadYt({ more: Boolean(ytCurrent() && ytCurrent().items.length) }));
+  $('ytPlayAll').addEventListener('click', () => {
+    const view = ytCurrent();
+    if (view && view.section === YT_SECTION.PLAYLIST) act(CMD.YT_OPEN, { playlistId: view.id }).then((res) => res.ok && switchTab('play'));
+  });
+  $('ytNow').addEventListener('click', () => switchTab('play'));
+  // Infinite scroll: fetch the next page well before the end (YT_MORE_SCREENS screens ahead).
+  $('ytList').addEventListener('scroll', () => {
+    const list = $('ytList');
+    if (list.scrollHeight - list.scrollTop - list.clientHeight < list.clientHeight * YT_MORE_SCREENS) loadYt({ more: true });
+  }, { passive: true });
+  $('ytMenu').addEventListener('click', (e) => {
+    if (e.target === $('ytMenu')) closeYtMenu();
+  });
+  $('ytMenuCancel').addEventListener('click', closeYtMenu);
+  $('ytMenuLater').addEventListener('click', async () => {
+    const c = app.ytMenu;
+    closeYtMenu();
+    if (!c) return;
+    const res = await act(CMD.YT_WATCH_LATER, { videoId: c.id });
+    if (res.ok) toast('已加入稍后观看', 'ok');
+  });
+  $('ytMenuChannel').addEventListener('click', () => {
+    const c = app.ytMenu;
+    closeYtMenu();
+    if (!c || !c.channelId) return;
+    switchTab('youtube');
+    if (!app.yt.length) app.yt = [ytView(YT_SECTION.HOME)];
+    pushYtView(YT_SECTION.CHANNEL, c.channelId, c.channel);
+  });
 
   // -------------------------------------------------------------------------
   // Devices: switcher, online probes, offline screen
@@ -715,6 +1064,10 @@
     app.library = { recent: [], bookmarks: [] };
     app.video = { hasVideo: false };
     app.url = '';
+    app.yt = []; // another Chromebook may be signed in to another YouTube account
+    app.upNext = { videoId: null, items: [] };
+    renderYt();
+    renderUpNext();
     app.retryMs = RETRY_MIN_MS;
     clearTimeout(app.retryTimer);
     app.retryTimer = null;
@@ -775,7 +1128,7 @@
     $('switcher').hidden = !app.switcherOpen;
     $('deviceChip').setAttribute('aria-expanded', String(app.switcherOpen));
     if (!app.switcherOpen) return;
-    $('deviceList').replaceChildren(...app.pairings.map((p) => deviceRow(p, { withDelete: true })));
+    setChildren($('deviceList'), app.pairings.map((p) => deviceRow(p, { withDelete: true })));
   };
 
   const renderOffline = () => {
@@ -785,7 +1138,7 @@
     $('offlineTitle').textContent = `${deviceLabel(app.pairing)} 不在线`;
     const others = app.pairings.filter((p) => !app.pairing || p.peerId !== app.pairing.peerId);
     $('offlineOthersLabel').hidden = others.length === 0;
-    $('offlineOthers').replaceChildren(...others.map((p) => deviceRow(p, { withDelete: false })));
+    setChildren($('offlineOthers'), others.map((p) => deviceRow(p, { withDelete: false })));
   };
 
   // -------------------------------------------------------------------------
@@ -909,24 +1262,24 @@
     if (touches.size > 0) requestAnimationFrame(flush);
   };
 
-  pad.addEventListener('pointerdown', (e) => {
-    pad.setPointerCapture(e.pointerId);
+  // Gesture logic is source-agnostic: (id, x, y) per finger, fed by Pointer or Touch Events below.
+  const padStart = (id, x, y) => {
     if (touches.size === 0) {
       Object.assign(gesture, { startT: performance.now(), moved: 0, multi: false });
       requestAnimationFrame(flush);
     }
-    touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
+    touches.set(id, { x, y, t: performance.now() });
     if (touches.size > 1) gesture.multi = true;
     pad.classList.add('active');
-  });
+  };
 
-  pad.addEventListener('pointermove', (e) => {
-    const prev = touches.get(e.pointerId);
+  const padMove = (id, x, y) => {
+    const prev = touches.get(id);
     if (!prev) return;
     const now = performance.now();
-    const dx = e.clientX - prev.x;
-    const dy = e.clientY - prev.y;
-    touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
+    const dx = x - prev.x;
+    const dy = y - prev.y;
+    touches.set(id, { x, y, t: now });
     gesture.moved += Math.abs(dx) + Math.abs(dy);
     if (touches.size >= 2) {
       // Two-finger swipe: content follows the fingers (swipe up = scroll down).
@@ -936,10 +1289,10 @@
     if (gesture.multi) return; // ignore the leftover finger after a scroll gesture
     acc.dx += accel(dx, now - prev.t);
     acc.dy += accel(dy, now - prev.t);
-  });
+  };
 
-  const endTouch = (e) => {
-    if (!touches.delete(e.pointerId)) return;
+  const padEnd = (id) => {
+    if (!touches.delete(id)) return;
     if (touches.size > 0) return;
     pad.classList.remove('active');
     const isTap = !gesture.multi && performance.now() - gesture.startT < TAP_MAX_MS && gesture.moved < TAP_MAX_MOVE_PX;
@@ -948,8 +1301,27 @@
       act(CMD.CLICK);
     }
   };
-  pad.addEventListener('pointerup', endTouch);
-  pad.addEventListener('pointercancel', endTouch);
+  if (ENV.pointerEvents) {
+    pad.addEventListener('pointerdown', (e) => {
+      pad.setPointerCapture(e.pointerId);
+      padStart(e.pointerId, e.clientX, e.clientY);
+    });
+    pad.addEventListener('pointermove', (e) => padMove(e.pointerId, e.clientX, e.clientY));
+    pad.addEventListener('pointerup', (e) => padEnd(e.pointerId));
+    pad.addEventListener('pointercancel', (e) => padEnd(e.pointerId));
+  } else {
+    // iOS 12: no Pointer Events and no `touch-action`. Touch events stay on the pad once started
+    // (implicit capture); preventDefault stops page scroll / zoom (needs a non-passive listener).
+    const eachTouch = (fn) => (e) => {
+      e.preventDefault();
+      Array.prototype.forEach.call(e.changedTouches, (t) => fn(t.identifier, t.clientX, t.clientY));
+    };
+    const active = { passive: false };
+    pad.addEventListener('touchstart', eachTouch(padStart), active);
+    pad.addEventListener('touchmove', eachTouch(padMove), active);
+    pad.addEventListener('touchend', eachTouch(padEnd), active);
+    pad.addEventListener('touchcancel', eachTouch(padEnd), active);
+  }
 
   // -------------------------------------------------------------------------
   // Lifecycle
@@ -979,6 +1351,29 @@
   $('ver').textContent = `v${VERSION}`;
   $('verOverlay').textContent = VERSION;
   log.info('app.start', { version: VERSION, client_id: clientId, paired: Boolean(app.pairing), devices: app.pairings.length });
+
+  // Flex `gap` arrived in Safari 14.1 and cannot be tested with @supports: measure it once;
+  // style.css falls back to margins under .no-flex-gap.
+  const flexGap = (() => {
+    const box = el('div');
+    box.style.cssText = 'display:flex;flex-direction:column;row-gap:1px;position:absolute;visibility:hidden';
+    box.append(el('div'), el('div'));
+    document.body.append(box);
+    const ok = box.scrollHeight === 1;
+    box.remove();
+    return ok;
+  })();
+  document.documentElement.classList.toggle('no-flex-gap', !flexGap);
+  log.info('env.detected', { ...ENV, flex_gap: flexGap, ua: navigator.userAgent.slice(0, 120) });
+
+  // iOS: pairing steps differ (camera -> Safari -> Add to Home Screen).
+  $('stepsAndroid').hidden = ENV.ios;
+  $('stepsIos').hidden = !ENV.ios;
+  $('installHintClose').addEventListener('click', () => {
+    localStorage.setItem(STORAGE.installHintOff, '1');
+    log.info('pairing.install_hint_closed');
+    renderInstall();
+  });
 
   // Diagnostics / automation seam: lets DevTools (and the e2e test) issue raw protocol commands,
   // e.g. CRRemote.send('libraryList'). Same path as the buttons, so replies and logs are identical.

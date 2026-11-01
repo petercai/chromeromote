@@ -1,6 +1,6 @@
 # Chrome Remote (Media)
 
-Use an Android phone as the remote for Chrome on a Chromebook connected to a TV: browse site.com, play,
+Use an Android phone or an iPad (iOS 12+) as the remote for Chrome on a Chromebook connected to a TV: browse site.com, play,
 seek, change volume and toggle fullscreen, all from the phone screen. No Bluetooth keyboard and no
 server to install.
 
@@ -98,6 +98,22 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
    - If the camera app doesn't react to QR codes: turn on "Scan QR codes" in the camera settings, or
      use the "Scan QR code" quick-settings tile on Android 13 and later.
 
+   **iPad / iPhone (iOS 12.5.8 and later, 1.0.21):**
+
+   1. Open the iPad **Camera**, point it at the QR code on the TV, and tap the notification at the
+      top. The page opens in **Safari** and connects.
+   2. Tap Safari's **Share** button → **"添加到主屏幕"** (Add to Home Screen). The orange hint at the
+      bottom of the page says the same. Safari keeps the pairing in the address bar, so the
+      home-screen icon "遥控" already carries it.
+   3. From then on, open "遥控" from the home screen. It runs full screen, without Safari's bars.
+   4. To add another Chromebook, scan its QR code the same way and add to the home screen again. You
+      can delete the extra icon afterwards; the pairing stays.
+
+   On iOS 12, the home-screen app and Safari keep separate storage, which is why the pairing travels in
+   the saved link. Some iOS 12 home-screen apps have no WebRTC. If that happens, the app shows
+   **"这里不能建立遥控连接"** (cannot connect here) with a button **"在 Safari 中打开"** (open in
+   Safari) that carries the pairing. Then use the remote in Safari.
+
 To cut off paired phones, click *重新生成密钥* (Generate new key) in the popup and scan again with the
 phone you want to keep.
 
@@ -181,6 +197,28 @@ Open *Terminal → Run Task…* (the default build task is `Ctrl+Shift+B`):
 - Only iyf.tv for now. Another site is one more entry in the adapter table in `extension/lib/playlist.js`.
 - If the row doesn't appear on an iyf.tv episode page, the site's layout probably changed: the extension log
   shows `playlist.not_found` with the selector that no longer matches.
+
+## YouTube (1.0.23)
+
+Browse YouTube on the phone and play on the TV, without the pointer. Chrome on the Chromebook must be
+**signed in to YouTube**; the phone uses that account.
+
+- The **YouTube** tab has four sections: **首页** (Home recommendations), **订阅** (Subscriptions),
+  **播放列表** (Playlists) and **稍后观看** (Watch later). Scroll down and more videos load by themselves.
+- Tap a video: the TV opens it full screen. While you browse, the TV keeps playing what it plays; it only
+  changes when you tap.
+- Tap a playlist to see its videos on the phone; **▶ 全部播放** (Play all) plays it from the start.
+- **Long press** a video: **加入稍后观看** (Save to Watch later) or **打开频道** (Go to channel, which lists the
+  channel's videos on the phone).
+- While the TV plays a YouTube video, the **播放** (Play) tab lists **接下来播放** (Up next).
+- When the TV is on YouTube, the phone opens on the YouTube tab.
+- The first time, the extension opens youtube.com in a **background tab** to read the lists; leave it open
+  (it is reused). Shorts are not shown.
+- "请先在 Chromebook 的 Chrome 里登录 YouTube" means Chrome on the Chromebook is not signed in to YouTube.
+- If the lists stop loading after a YouTube update, the extension log shows `yt.request` (did the request
+  work?) and `yt.parsed` (`unknown` > 0 means YouTube changed its data format; the fix goes in
+  `extension/lib/youtube.js`).
+- No search and no YouTube Music player yet (design doc 3.13.10 lists the next phases).
 
 ## Version number: is GitHub serving my latest code?
 

@@ -17,12 +17,14 @@
 
 html, body {
   margin: 0;
+  height: 100%; /* iOS < 15.4 fallback */
   height: 100dvh;
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font: 16px/1.4 system-ui, -apple-system, "Noto Sans SC", sans-serif;
-  user-select: none;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
   overscroll-behavior: none;
 }
 
@@ -42,7 +44,7 @@ body { display: flex; flex-direction: column; padding-bottom: env(safe-area-inse
 .ver { font-size: 11px; flex: none; }
 
 main { flex: 1; min-height: 0; position: relative; }
-.tab { position: absolute; inset: 0; display: none; flex-direction: column; gap: var(--gap); padding: var(--gap); }
+.tab { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: none; flex-direction: column; gap: var(--gap); padding: var(--gap); }
 .tab.active { display: flex; }
 
 /* Buttons: min 56x56 touch target, 100ms pressed feedback */
@@ -53,6 +55,7 @@ button {
   font-size: 22px; font-family: inherit;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   transition: transform 100ms, background 100ms;
+  touch-action: manipulation; /* no double-tap zoom (iOS ignores user-scalable=no) */
 }
 button:active { transform: scale(0.94); background: #2c2c2c; }
 button:disabled { opacity: 0.35; }
@@ -98,7 +101,7 @@ input[type="range"]:disabled { opacity: 0.35; }
 
 /* Overlay + toast (highest z-order) */
 .overlay {
-  position: fixed; inset: 0; z-index: 20; background: var(--bg);
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 20; background: var(--bg);
   display: flex; align-items: center; justify-content: center; text-align: center; padding: 32px;
 }
 .overlay[hidden], .toast[hidden] { display: none; }
@@ -151,10 +154,10 @@ input[type="range"]:disabled { opacity: 0.35; }
 .device-pick .on { color: #3fb950; }
 .add-device { min-height: 56px; border: 1px dashed #4a4a4a; background: transparent; color: var(--accent); font-size: 15px; font-weight: 600; }
 
-.offline { position: absolute; inset: 0; z-index: 5; background: var(--bg); padding: 24px; display: flex; flex-direction: column; justify-content: center; gap: 12px; text-align: center; }
+.offline { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 5; background: var(--bg); padding: 24px; display: flex; flex-direction: column; justify-content: center; gap: 12px; text-align: center; }
 .offline .device-list { text-align: left; }
 
-.sheet-backdrop { position: fixed; inset: 0; z-index: 25; background: rgba(0, 0, 0, 0.6); display: flex; flex-direction: column; justify-content: flex-end; }
+.sheet-backdrop { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 25; background: rgba(0, 0, 0, 0.6); display: flex; flex-direction: column; justify-content: flex-end; }
 .sheet { background: var(--surface); border-radius: 16px 16px 0 0; padding: 20px 16px 24px; display: flex; flex-direction: column; gap: 12px; }
 .sheet h2 { margin: 0; font-size: 18px; }
 .sheet p { margin: 0; font-size: 14px; line-height: 1.5; }
@@ -162,7 +165,7 @@ input[type="range"]:disabled { opacity: 0.35; }
 .sheet-actions button { min-height: 52px; font-size: 16px; }
 button.danger { background: var(--danger); color: #fff; font-weight: 600; }
 .toast.ok { background: var(--ok); }
-.tabbar { grid-template-columns: repeat(3, 1fr); }
+.tabbar { grid-template-columns: repeat(4, 1fr); }
 /* Status bar room for the device name (mockup): status text only when NOT connected, no site name. */
 .statusbar .site { display: none; }
 #latency { white-space: nowrap; font-size: 12px; margin-left: auto; }
@@ -182,7 +185,7 @@ button.danger { background: var(--danger); color: #fff; font-weight: 600; }
 .transport { justify-content: space-between; }
 .ep-btn { min-width: 48px; width: 48px; }
 
-.playlist-sheet { max-height: 80dvh; overflow-y: auto; padding: 16px 12px 20px; }
+.playlist-sheet { max-height: 80vh; max-height: 80dvh; overflow-y: auto; padding: 16px 12px 20px; }
 .pl-head { display: flex; align-items: center; gap: 8px; }
 .pl-head-text { flex: 1; min-width: 0; }
 .pl-head-text h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -203,3 +206,86 @@ button.danger { background: var(--danger); color: #fff; font-weight: 600; }
   border: 1px dashed #5a5a5a; border-radius: 10px; font-size: 15px; text-align: left;
 }
 .pl-special small { margin: 0; flex: none; }
+
+/* ---- 1.0.21: iPad / iOS 12 (iteration 20) ---- */
+/* "Add to Home Screen" hint (iOS Safari tab only), above the tab bar */
+.install-hint {
+  position: fixed; left: var(--gap); right: var(--gap); bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 12;
+  display: flex; align-items: center; background: #2a1f14; border: 1px solid var(--accent); border-radius: var(--radius);
+  padding: 8px 8px 8px 14px; font-size: 14px; line-height: 1.5;
+}
+.install-hint[hidden] { display: none; }
+.install-hint span { flex: 1; min-width: 0; }
+.hint-close { flex: none; min-width: 44px; min-height: 44px; width: 44px; margin-left: 8px; background: transparent; font-size: 16px; color: var(--text-dim); }
+/* No WebRTC in this home-screen app: covers everything, including the "not paired" overlay */
+.no-webrtc { z-index: 22; }
+.button-link {
+  display: flex; align-items: center; justify-content: center; min-height: var(--btn); margin-top: 16px;
+  border-radius: var(--radius); background: var(--accent); color: #000; font-size: 18px; font-weight: 600; text-decoration: none;
+}
+
+/* Flex `gap` needs Safari 14.1: app.js adds .no-flex-gap when unsupported; same spacing via margins. */
+.no-flex-gap .tab > * + *, .no-flex-gap .offline > * + *, .no-flex-gap .sheet > * + * { margin-top: var(--gap); }
+.no-flex-gap .switcher-panel > * + * { margin-top: 10px; }
+.no-flex-gap .lib-list > * + *, .no-flex-gap .device-list > * + *, .no-flex-gap .pl-specials > * + * { margin-top: 8px; }
+.no-flex-gap .lib-open > * + * { margin-top: 4px; }
+.no-flex-gap .device-pick > * + * { margin-top: 3px; }
+.no-flex-gap .statusbar > * + *, .no-flex-gap button.wide > * + *, .no-flex-gap .title-row > * + *,
+.no-flex-gap .pl-head > * + *, .no-flex-gap .pl-special > * + * { margin-left: 8px; }
+.no-flex-gap .device-chip > * + * { margin-left: 6px; }
+.no-flex-gap .playlist-row > * + * { margin-left: 10px; }
+.no-flex-gap .volume > * + * { margin-left: var(--gap); }
+/* Keep the auto margins the fallback above would override */
+.no-flex-gap .tab > .transport { margin-top: auto; }
+.no-flex-gap .playlist-row .pl-chev { margin-left: auto; }
+
+/* ---- 1.0.23: YouTube tab (design 3.13, option A) ---- */
+.yt-chips { display: flex; gap: 8px; overflow-x: auto; flex: none; -webkit-overflow-scrolling: touch; }
+.yt-chips button {
+  flex: none; min-width: 0; min-height: 40px; height: 40px; padding: 0 14px; border-radius: 20px;
+  border: 1px solid var(--border); font-size: 15px; flex-direction: row;
+}
+.yt-chips button.active { background: var(--text); color: var(--bg); font-weight: 600; border-color: var(--text); }
+.yt-chips[hidden], .yt-head[hidden], .yt-state[hidden], .yt-now[hidden], .up-next[hidden], #ytPlayAll[hidden], .yt-retry[hidden] { display: none; }
+.yt-head { display: flex; align-items: center; gap: 8px; flex: none; }
+.yt-back { min-width: 44px; width: 44px; min-height: 44px; height: 44px; border-radius: 22px; }
+.yt-title { flex: 1; min-width: 0; margin: 0; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.yt-playall { min-height: 40px; height: 40px; padding: 0 14px; font-size: 14px; flex-direction: row; background: var(--accent); color: #000; font-weight: 600; border-radius: 20px; }
+
+.yt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.yt-scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.yt-card {
+  width: 100%; min-height: 88px; flex-direction: row; align-items: flex-start; justify-content: flex-start; gap: 12px;
+  padding: 6px; background: transparent; text-align: left; font-size: 15px;
+}
+.yt-card:active { background: var(--surface); }
+.yt-thumb { position: relative; width: 136px; height: 76px; flex: none; border-radius: 8px; overflow: hidden; background: #262626; }
+.yt-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.yt-badge { position: absolute; right: 4px; bottom: 4px; padding: 1px 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.82); color: #fff; font-size: 11px; }
+.yt-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
+.yt-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.yt-text .t { font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.yt-text .s { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.yt-state { flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.yt-state p { margin: 0; font-size: 14px; }
+.yt-retry { min-height: 44px; padding: 0 24px; font-size: 15px; }
+.yt-now {
+  flex: none; min-height: 56px; flex-direction: row; justify-content: space-between; gap: 8px; padding: 0 14px;
+  border: 1px solid var(--border); font-size: 20px; color: var(--text-dim);
+}
+.yt-now-text { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+.yt-now-text small { margin: 0; font-size: 12px; }
+.yt-now-text span { max-width: 100%; font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.yt-menu-title { font-size: 16px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sheet-item { min-height: 52px; }
+.sheet-item:disabled { opacity: 0.35; }
+
+/* Play tab: "Up next" fills the space below the controls and scrolls on its own */
+.up-next { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.up-next-head { margin: 4px 0 6px; font-size: 14px; color: var(--text-dim); font-weight: 600; }
+
+/* Flex-gap fallback (iOS 12) for the new containers */
+.no-flex-gap .yt-chips > * + *, .no-flex-gap .yt-head > * + * { margin-left: 8px; }
+.no-flex-gap .yt-list > * + * { margin-top: 6px; }
+.no-flex-gap .yt-card > * + * { margin-left: 12px; }
+.no-flex-gap .yt-text > * + *, .no-flex-gap .yt-state > * + * { margin-top: 4px; }

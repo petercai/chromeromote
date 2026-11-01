@@ -40,6 +40,11 @@
     SEEK_BY: 'seekBy',
     SEEK_TO: 'seekTo',
     VOLUME: 'volume',
+    // YouTube catalog (service worker via a youtube.com tab; design 3.13 option A)
+    YT_BROWSE: 'ytBrowse',
+    YT_UP_NEXT: 'ytUpNext',
+    YT_OPEN: 'ytOpen',
+    YT_WATCH_LATER: 'ytWatchLater',
     // Diagnostics
     PING: 'ping',
   });
@@ -53,14 +58,28 @@
     CMD.PLAYLIST_GET, CMD.PLAYLIST_OPEN, CMD.PLAYLIST_STEP,
   ]);
   const VIDEO_CMDS = Object.freeze([CMD.PLAY_PAUSE, CMD.SEEK_BY, CMD.SEEK_TO, CMD.VOLUME]);
+  const YOUTUBE_CMDS = Object.freeze([CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_OPEN, CMD.YT_WATCH_LATER]);
+
+  // Sections of the phone's YouTube tab (playlist / channel take an id).
+  const YT_SECTION = Object.freeze({
+    HOME: 'home',
+    SUBSCRIPTIONS: 'subscriptions',
+    PLAYLISTS: 'playlists',
+    WATCH_LATER: 'watchLater',
+    PLAYLIST: 'playlist',
+    CHANNEL: 'channel',
+  });
   // High-frequency input that is fire-and-forget (no ack) to avoid flooding the channel.
   const FIRE_AND_FORGET = Object.freeze([CMD.MOVE, CMD.SCROLL]);
 
   // What a command needs from the target tab. On ChromeOS the extension (and the phone link) outlives
   // the last closed browser window, so commands that navigate anyway may open a fresh window.
   const TAB_NEED = Object.freeze({ NONE: 'none', LAUNCH: 'launch', REQUIRED: 'required' });
-  const TAB_FREE_CMDS = Object.freeze([CMD.PING, CMD.LIBRARY_LIST, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE]);
-  const TAB_LAUNCH_CMDS = Object.freeze([CMD.HOME, CMD.OPEN_ENTRY]);
+  // YouTube reads run in a youtube.com data tab of their own: they never need (or touch) the TV's tab.
+  const TAB_FREE_CMDS = Object.freeze([
+    CMD.PING, CMD.LIBRARY_LIST, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE, CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_WATCH_LATER,
+  ]);
+  const TAB_LAUNCH_CMDS = Object.freeze([CMD.HOME, CMD.OPEN_ENTRY, CMD.YT_OPEN]);
 
   // Stable error codes, surfaced in logs and on the phone's error toast.
   const ERR = Object.freeze({
@@ -77,6 +96,8 @@
     AUTOPLAY_BLOCKED: 'AUTOPLAY_BLOCKED', // unmuted play() refused without a real gesture; played muted instead
     NO_PLAYLIST: 'NO_PLAYLIST', // this page has no episode list (or the site is not supported)
     NO_EPISODE: 'NO_EPISODE', // no previous / next numbered episode
+    YT_SIGNED_OUT: 'YT_SIGNED_OUT', // a signed-in YouTube section answered as anonymous: sign in on the Chromebook
+    YT_FAILED: 'YT_FAILED', // YouTube request failed or its data was not understood (data.reason says why)
     PEER_UNAVAILABLE: 'PEER_UNAVAILABLE',
     TIMEOUT: 'TIMEOUT',
     INTERNAL: 'INTERNAL',
@@ -109,6 +130,7 @@
     if (BROWSER_CMDS.includes(cmd)) return 'browser';
     if (PAGE_CMDS.includes(cmd)) return 'page';
     if (VIDEO_CMDS.includes(cmd)) return 'video';
+    if (YOUTUBE_CMDS.includes(cmd)) return 'youtube';
     return null;
   };
   const needsAck = (cmd) => !FIRE_AND_FORGET.includes(cmd);
@@ -130,6 +152,11 @@
   const fail = (errorCode, data = null) => ({ ok: false, errorCode, data });
 
   const isFiniteNumber = (n) => typeof n === 'number' && Number.isFinite(n);
+  // YouTube ids: video ids are 11 chars; playlist / channel ids are longer, same alphabet.
+  const isVideoId = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{11}$/.test(v);
+  const isYtListId = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{2,64}$/.test(v);
+  const YT_ID_SECTIONS = Object.freeze([YT_SECTION.PLAYLIST, YT_SECTION.CHANNEL]);
+  const YT_CURSOR_MAX = 4096;
 
   // Per-command argument validators; return null when valid, else an error code.
   const ARG_RULES = Object.freeze({
@@ -149,6 +176,21 @@
         ? null
         : ERR.BAD_MESSAGE,
     [CMD.PLAYLIST_STEP]: (a) => (a.dir === 1 || a.dir === -1 ? null : ERR.BAD_MESSAGE),
+    [CMD.YT_BROWSE]: (a) =>
+      Object.values(YT_SECTION).includes(a.section) &&
+      (YT_ID_SECTIONS.includes(a.section) ? isYtListId(a.id) : a.id === undefined) &&
+      (a.cursor === undefined || (typeof a.cursor === 'string' && a.cursor.length > 0 && a.cursor.length <= YT_CURSOR_MAX))
+        ? null
+        : ERR.BAD_MESSAGE,
+    [CMD.YT_UP_NEXT]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),
+    [CMD.YT_WATCH_LATER]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),
+    // At least one of videoId / playlistId (a playlist alone starts at its first video).
+    [CMD.YT_OPEN]: (a) =>
+      (a.videoId !== undefined || a.playlistId !== undefined) &&
+      (a.videoId === undefined || isVideoId(a.videoId)) &&
+      (a.playlistId === undefined || isYtListId(a.playlistId))
+        ? null
+        : ERR.BAD_MESSAGE,
     // Only http(s) pages may be opened from the phone; time (resume position) is optional.
     [CMD.OPEN_ENTRY]: (a) =>
       typeof a.url === 'string' && /^https?:\/\//i.test(a.url) && (a.time === undefined || (isFiniteNumber(a.time) && a.time >= 0))
@@ -279,6 +321,7 @@
     executorOf,
     needsAck,
     TAB_NEED,
+    YT_SECTION,
     tabNeedOf,
     makeCmd,
     makeReply,

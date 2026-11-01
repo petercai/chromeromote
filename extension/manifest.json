@@ -2,9 +2,15 @@
   "manifest_version": 3,
   "name": "Chrome Remote (Media)",
   "description": "Control Chrome video playback and browsing from your Android phone over WebRTC.",
-  "version": "1.0.20",
+  "version": "1.0.23",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArRjmqtw91n4zOvbcmm5TbYnA3mA47mGDWn0A5ooYZlSitCcXELluXiKi+ZIOBBhnU+bwxQ8op5/xL0FYk6kBSRdGz6XVqFxpZ4kQMfYbCrpH1QfsA+rwO45TT4oNOK9nfjEbh5HZgHqu08ZPD3O1UodMSiIkecUQgZ0/QPP8wXyyumfCgwVJCgX/GDM4zCR6iNGrl6v74NiiC9XyNZq6naPRVvOZo9XFtjZNOdmLn3fxUQI8XkzdIGQX0ffjGI/186yC85X1DHilsXXxjWrAQtgtF1I3RqZWhELsiI2sTQSZpN6U65WzVJO+yv47TOOQfx6ZnuzilKcFTr3CP2c4zQIDAQAB",
   "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "permissions": [
     "tabs",
     "offscreen",
@@ -19,6 +25,10 @@
   },
   "action": {
     "default_title": "Chrome Remote",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    },
     "default_popup": "popup.html"
   },
   "content_scripts": [
