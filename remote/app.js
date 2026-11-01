@@ -78,6 +78,21 @@
     [ERR.NO_MUSIC]: '没有找到 YouTube Music 的播放器(页面可能改版了)',
   });
 
+  // This page's version; the extension's comes with WELCOME (app.pairing.version).
+  const VERSION = globalThis.CR_VERSION || 'unknown';
+  /** The Chromebook's extension is older than this page (it is unpacked: it does not update by itself). */
+  const extensionOutdated = () => {
+    const ext = app.pairing && app.pairing.version;
+    return Boolean(ext) && VERSION !== 'unknown' && CR.compareVersions(ext, VERSION) < 0;
+  };
+  const updateHint = () => `Chromebook 上的扩展是旧版本 v${app.pairing.version}(遥控网页是 v${VERSION}),请更新扩展后重试`;
+  /**
+   * Text for an error code. An older extension rejects commands / arguments it does not know yet as
+   * BAD_MESSAGE ("命令格式错误"), which is really "update the extension" (iteration 26).
+   */
+  const errorText = (code, fallback = '操作失败') =>
+    code === ERR.BAD_MESSAGE && extensionOutdated() ? updateHint() : ERROR_TEXT[code] || `${fallback}:${code}`;
+
   const $ = (id) => document.getElementById(id);
 
   // -------------------------------------------------------------------------
@@ -389,6 +404,11 @@
       log.info('device.welcome', { peer_id: updated.peerId, name: updated.name, version: updated.version });
       app.ytAutoSwitched = false;
       setStatus('connected');
+      // New phone features need the matching extension: say so once per connection, not "命令格式错误" later.
+      if (extensionOutdated()) {
+        log.warn('device.version_mismatch', { extension_version: updated.version, page_version: VERSION });
+        toast(updateHint());
+      }
       refreshLibrary();
       if (app.tab === 'youtube') ensureYtLoaded();
       return;
@@ -515,8 +535,8 @@
   const act = async (cmd, args) => {
     const res = await send(cmd, args);
     if (!res.ok && res.error_code !== 'OFFLINE') {
-      log.warn('cmd.failed', { cmd, error_code: res.error_code });
-      toast(ERROR_TEXT[res.error_code] || `操作失败:${res.error_code}`);
+      log.warn('cmd.failed', { cmd, error_code: res.error_code, extension_version: app.pairing && app.pairing.version });
+      toast(errorText(res.error_code));
     }
     return res;
   };
@@ -739,7 +759,7 @@
     if (!app.plSheet) return; // closed meanwhile
     app.plSheet = res.ok
       ? { loading: false, data: res.data, error: null }
-      : { ...app.plSheet, loading: false, error: ERROR_TEXT[res.error_code] || `读取失败:${res.error_code}` };
+      : { ...app.plSheet, loading: false, error: errorText(res.error_code, '读取失败') };
     log.info('ui.playlist_loaded', { ok: res.ok, error_code: res.error_code, range, count: res.ok ? res.data.episodes.length : 0 });
     renderPlaylistSheet();
   };
@@ -815,7 +835,7 @@
       view.loaded = true;
     } else {
       view.error = res.error_code;
-      log.warn('ui.yt_failed', { section: view.section, error_code: res.error_code, reason: res.data && res.data.reason });
+      log.warn('ui.yt_failed', { section: view.section, error_code: res.error_code, reason: res.data && res.data.reason, extension_version: app.pairing && app.pairing.version });
     }
     if (seq === app.ytSeq || ytCurrent() === view) renderYt();
   };
@@ -949,7 +969,7 @@
   const ytStatusText = (view) => {
     if (view.loading && !view.items.length) return '正在读取…';
     if (view.loading) return '正在读取更多…';
-    if (view.error) return ERROR_TEXT[view.error] || `读取失败:${view.error}`;
+    if (view.error) return errorText(view.error, '读取失败');
     if (view.loaded && !view.items.length) return YT_EMPTY_TEXT[view.section] || (isMusicView(view) ? '这里还没有歌曲' : '这里还没有视频');
     return '';
   };
@@ -1469,7 +1489,6 @@
   });
 
   // Version shown on screen so a stale GitHub Pages deploy is obvious (compare with the extension popup).
-  const VERSION = globalThis.CR_VERSION || 'unknown';
   $('ver').textContent = `v${VERSION}`;
   $('verOverlay').textContent = VERSION;
   log.info('app.start', { version: VERSION, client_id: clientId, paired: Boolean(app.pairing), devices: app.pairings.length });
@@ -1504,6 +1523,7 @@
     status: () => app.status,
     tv: () => ({ url: app.url, hasVideo: app.video.hasVideo, music: app.music ? { title: app.music.title, current: app.music.current, total: app.music.total } : null }),
     version: VERSION,
+    errorText, // what the phone shows for an error code with the current device (version-aware)
     devices: () => app.pairings.map((p) => ({ peerId: p.peerId, name: p.name, current: Boolean(app.pairing && p.peerId === app.pairing.peerId) })),
   });
 

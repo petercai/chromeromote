@@ -149,6 +149,7 @@ phone you want to keep.
 | Toast says "Chrome 没有打开的窗口,点「首页」打开" (no open Chrome window, `TAB_NOT_FOUND`) | All Chrome windows are closed. On ChromeOS the extension and the phone link stay connected anyway. From 1.0.17, tapping 首页 (Home) or opening a library entry opens a new maximized Chrome window; the library list keeps working without a window |
 | Toast says "暂不支持点击嵌入框架内的内容" (`CLICK_IFRAME`) | The element under the pointer is inside an iframe, which v1 can't click (see the known limits in the implementation notes) |
 | Toast says "已静音播放" (played muted, `AUTOPLAY_BLOCKED`) | Chrome's autoplay policy blocked playback with sound. Raise the volume slider, or click once on the page by hand |
+| A list or toast says "命令格式错误" (bad command, `BAD_MESSAGE`), or "Chromebook 上的扩展是旧版本 vX(遥控网页是 vY),请更新扩展后重试" (the extension is older than the remote page) | The phone page (GitHub Pages) updated, but the unpacked extension on the Chromebook did not: an older extension rejects commands it does not know yet, e.g. 音乐 → 首页 (Music → Home) needs 1.0.28+. Copy the latest extension onto the Chromebook and click *重新加载* (reload) in `chrome://extensions`; the popup and the phone's device switcher show both versions. Since 1.0.29 the phone says this itself when it connects (log `device.version_mismatch`) |
 
 - **Logs**: the extension popup has *查看日志* (view logs) and *导出日志* (export logs), saved as JSON
   lines. Every command carries a `cmd_id`, which you can match against the phone page's DevTools
