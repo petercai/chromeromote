@@ -8,7 +8,8 @@
  *
  * Raw page data (plain objects, see content.js readMusicRaw):
  *   {items: [{title, artist, duration, thumb, selected, automix}], barTitle, barByline,
- *    session: {title, artist, album, artwork: [{src, sizes}]} | null, ad, likeStatus, repeatMode}
+ *    session: {title, artist, album, artwork: [{src, sizes}]} | null, ad, likeStatus, repeatMode,
+ *    av: {disabled, videoPressed} | null}   (the "歌曲 / 视频" switch, design 3.15.11; null = not on the page)
  */
 (function (root) {
   'use strict';
@@ -26,6 +27,15 @@
     likeRenderer: 'ytmusic-player-bar #like-button-renderer',
     adPlayer: '#movie_player',
     adClass: 'ad-showing',
+    // "歌曲 / 视频" switch (measured 2026-11-08). toggle-disabled = it cannot switch now: during an ad,
+    // or the track has a single version; aria-pressed on the buttons says which side is on.
+    avToggle: 'ytmusic-av-toggle',
+    avVideoButton: 'ytmusic-av-toggle .video-button',
+    avDisabledAttr: 'toggle-disabled',
+    // The expanded player (art / video over the page). Open = attribute player-page-open.
+    playerPage: 'ytmusic-player-page',
+    playerPageOpenAttr: 'player-page-open',
+    playerPageToggle: 'ytmusic-player-bar .toggle-player-page-button',
   });
 
   // Player-bar buttons per action (the expanded-menu duplicates live outside .right-controls-buttons).
@@ -36,6 +46,8 @@
     dislike: 'ytmusic-player-bar #like-button-renderer > yt-button-shape button',
     repeat: 'ytmusic-player-bar .right-controls-buttons .repeat button',
     shuffle: 'ytmusic-player-bar .right-controls-buttons .shuffle button',
+    avSong: 'ytmusic-av-toggle .song-button',
+    avVideo: 'ytmusic-av-toggle .video-button',
   });
   const ACTIONS = Object.freeze(Object.keys(CONTROL_SELECTORS));
 
@@ -73,6 +85,28 @@
     );
   };
 
+  /** The "歌曲 / 视频" switch for the phone: {disabled, mode: 'song' | 'video'}, or null when the page has none. */
+  const avState = (av) => (av ? Object.freeze({ disabled: Boolean(av.disabled), mode: av.videoPressed ? 'video' : 'song' }) : null);
+
+  /** Identity of the song playing now (queue position + title), for "once per song" decisions; null when unknown. */
+  const songKey = (raw) => {
+    if (!raw) return null;
+    const items = raw.items || [];
+    const current = items.findIndex((it) => it.selected);
+    const title = clean(current >= 0 ? items[current].title : raw.barTitle);
+    return title ? `${current}|${title}` : null;
+  };
+
+  /**
+   * Q53 "有视频就总是放视频": switch this song to Video? Only once per song (the phone may switch it back),
+   * only when the switch can act (not during an ad, not for a single-version track) and it is on Song.
+   */
+  const shouldAutoVideo = (raw, handledKey) => {
+    const key = songKey(raw);
+    const av = avState(raw && raw.av);
+    return Boolean(key && key !== handledKey && av && !av.disabled && av.mode === 'song');
+  };
+
   /**
    * Now-playing summary for the phone; null when the page has no music player.
    * The selected queue item names the song even during an ad (the Media Session then describes the ad),
@@ -97,8 +131,9 @@
       current,
       total: items.length,
       queue: queueWindow(items, current),
+      av: avState(raw.av),
     });
   };
 
-  root.CRMusic = Object.freeze({ SITE, CONTROL_SELECTORS, ACTIONS, isMusicHost, pickArt, queueWindow, musicState, normalizeRepeat, normalizeLike });
+  root.CRMusic = Object.freeze({ SITE, CONTROL_SELECTORS, ACTIONS, isMusicHost, pickArt, queueWindow, musicState, normalizeRepeat, normalizeLike, avState, songKey, shouldAutoVideo });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

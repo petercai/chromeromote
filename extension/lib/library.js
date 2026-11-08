@@ -5,7 +5,8 @@
  * exposed as `globalThis.CRLib`.
  *
  * Entry shape: {key, url, title, time, duration, updatedAt, device}
- *   key    = URL without the hash (one entry per page/episode)
+ *   key    = URL without the hash (one entry per page/episode), on the canonical host for mirror
+ *            domains (kubb.tv and iyf.tv share entries, design 3.15.3; needs lib/protocol.js loaded first)
  *   time   = playback position in seconds
  *   device = name of the Chromebook it was watched / bookmarked on
  *
@@ -30,10 +31,10 @@
     return t.length > max ? `${t.slice(0, max - 1)}…` : t;
   };
 
-  /** Stable identity of a watch: the URL without its fragment. Returns null for non-http(s). */
+  /** Stable identity of a watch: the URL without its fragment, mirrors unified. Returns null for non-http(s). */
   const entryKey = (url) => {
     try {
-      const u = new URL(url);
+      const u = new URL(root.CR ? root.CR.canonicalUrl(url) : url);
       if (!/^https?:$/.test(u.protocol)) return null;
       u.hash = '';
       return u.toString();

@@ -18,7 +18,7 @@ Design and decisions: [docs/media-remote/](docs/media-remote/), with the
 |------|------------|
 | `extension/` | MV3 Chrome extension: service worker (command router), offscreen document (WebRTC endpoint), content script (virtual pointer and video control), popup (pairing QR code and logs) |
 | `extension/lib/` | Wire protocol and logger, **shared** by the extension and the phone page |
-| `remote/` | Phone remote PWA (tabs: iyf.tv (touchpad) / YouTube / Play / Library) |
+| `remote/` | Phone remote PWA (tabs: kubb.tv / iyf.tv (touchpad + site dropdown) / YouTube / Play / Library) |
 | `tests/` | Unit tests (protocol) and an end-to-end test (real extension + real PeerJS) |
 
 ## Setup (one time)
@@ -127,11 +127,12 @@ phone you want to keep.
    install: Chrome Apps are no longer supported on ChromeOS, and a web app can't control Chrome tabs.
 2. On the phone, open "Chrome 遥控" from the home screen. If no Chrome window is open, tap 首页
    (Home) to open one (1.0.17).
-3. **iyf.tv** tab (called 浏览 / Browse before 1.0.28): slide one finger to move the pointer, tap to click, and slide two fingers to
+3. **kubb.tv** tab (the label shows the site; called iyf.tv in 1.0.28–1.0.30 and 浏览 / Browse before): the **site
+   dropdown** at the top switches kubb.tv / iyf.tv (see below). Slide one finger to move the pointer, tap to click, and slide two fingers to
    scroll. The buttons are Back, Reload, Home (site.com), Page up and Page down.
 4. When a video starts, the phone switches to the **Play** tab by itself. It has play/pause, −10 / +10
    / +30 s, a seek slider (the video jumps when you let go), a volume slider and fullscreen.
-5. **Page zoom** (1.0.30), on the **iyf.tv** tab under the touchpad: **A+** / **A−** zoom the TV's page one
+5. **Page zoom** (1.0.30), on the **kubb.tv** tab under the touchpad: **A+** / **A−** zoom the TV's page one
    Chrome level (hold to keep going), the number in the middle is the current zoom, and tapping it goes back to
    **100%**. Orange means "not 100%". Chrome remembers the zoom per site and per machine, so iyf.tv can stay at
    150% on the TV and at 80% on a small laptop. Ctrl + / Ctrl − on the Chromebook show up on the phone too.
@@ -200,7 +201,7 @@ Open *Terminal → Run Task…* (the default build task is `Ctrl+Shift+B`):
   range edge by themselves.
 - Tap the 选集 row for the full list: range tabs for long shows, a grid of numbered episodes, and the
   specials listed separately with where they sit ("在 09 之后"). Tap one to play it on the TV.
-- Only iyf.tv for now. Another site is one more entry in the adapter table in `extension/lib/playlist.js`.
+- kubb.tv and iyf.tv (one site, two domains). Another site is one more entry in the adapter table in `extension/lib/playlist.js`.
 - If the row doesn't appear on an iyf.tv episode page, the site's layout probably changed: the extension log
   shows `playlist.not_found` with the selector that no longer matches.
 
@@ -237,6 +238,13 @@ When the TV plays music on **music.youtube.com**, the **播放** (Play) tab turn
 - **待播** (Up next): the queue around the current song; tap a song to play it now.
 - If the TV is on YouTube Music when the phone connects, the phone opens on the Play tab.
 - During an ad, the phone still shows the song that comes next, with an orange **广告** badge.
+- **歌曲 / 视频** (1.0.31) at the top: Song (audio with the art) or the music video on the TV. Every new song
+  switches to **视频** by itself when it has a video (it plays on a TV); the switch changes the current song
+  only. It is greyed out during an ad and for songs with a single version.
+- **全屏 / 退出全屏** (1.0.31) at the top: full screen on the **TV** (YouTube Music's own player fills it).
+- **待播 / 歌词 / 相关** (1.0.31) tabs under the controls: the queue; the song's lyrics (with their source);
+  related songs, playlists, albums and artists (a song plays on the TV, the others open in the YouTube tab's
+  music view). Lyrics and related are read in the background **music.youtube.com** tab; the TV is not touched.
 - If the buttons stop working after a YouTube Music update, the extension log shows `music.not_found` with the
   control that no longer matches; the selectors are in `extension/lib/music.js`.
 - Pick music on the phone (1.0.28): **YouTube** tab → **音乐** (Music), with **首页** (Home: quick picks,
@@ -244,6 +252,70 @@ When the TV plays music on **music.youtube.com**, the **播放** (Play) tab turn
   YouTube Music and keeps going through its album / playlist (or its radio). Tap a playlist or album to see
   its songs; **▶ 全部播放** plays from the first song. The extension reads these lists in a
   **music.youtube.com** tab (the TV's, or one it opens in the background).
+
+## kubb.tv / iyf.tv (1.0.31)
+
+iyf.tv is moving to **kubb.tv**; both work and are the same site (same pages, same `/play/…` addresses).
+
+- The bottom-left tab shows the site the TV is on (or your preferred one). At the top of that tab, the
+  **🌐 kubb.tv ▾** dropdown switches the TV to the **same page on the other domain**, resumed at the same time.
+  The choice becomes your preferred site (synced across Chromebooks with the same Google account): **首页**
+  (Home) and the library open on it. Default: kubb.tv.
+- **Bookmarks and recent watches work on both domains**: a page is the same entry whichever domain you watched or
+  saved it on. Bookmarks made before 1.0.31 need no change.
+- The episode list (选集) and page zoom work on both domains (zoom is remembered per domain by Chrome).
+
+## Sound on a Google Nest Mini (1.0.31)
+
+Pick a speaker on the phone and Chrome plays the **sound** there while the **picture stays on the TV**, for
+kubb.tv / iyf.tv, YouTube and YouTube Music. It works with any audio output the Chromebook (or a desktop /
+laptop running the extension) has: a **Bluetooth-paired Nest Mini**, the TV over HDMI, the built-in speakers.
+
+How it works: a Chrome extension is not allowed to start Google Cast (tested: Chrome's Cast interface is closed
+to extensions), so the speaker is connected over **Bluetooth**. The page's own audio is captured by the
+extension (the video sites get no permission) and played on the chosen output; the TV's player is muted meanwhile.
+
+**Limits:** one Bluetooth source at a time on the Nest Mini; no speaker groups; about 0.2 s delay (fine for
+music, lips may look slightly off on video); the Nest Mini must be within Bluetooth range (about 10 m).
+
+### English: pair a Nest Mini with the TV's Chromebook (once)
+
+1. **Pairing mode on the Nest Mini.** Say **"Hey Google, Bluetooth pairing"**, or in the **Google Home** app:
+   the Nest Mini → **Settings** (gear) → **Audio** → **Paired Bluetooth devices** → **Enable pairing mode**.
+   If your phone or another computer is connected to it over Bluetooth, disconnect that first.
+2. **Pair on the Chromebook.** Click the clock (bottom right) → turn **Bluetooth** on → the arrow next to it
+   (or **Settings → Bluetooth → Pair new device**) → pick the Nest Mini (its Home app name, e.g.
+   "Living Room speaker") → **Pair** → wait for **Connected**.
+3. **Keep the TV as the normal output** (optional). ChromeOS sends all sound to a newly connected Bluetooth
+   speaker. To keep sound on the TV unless you pick otherwise: clock → the arrow next to the volume slider →
+   **Output** → the TV (HDMI).
+4. **Allow the extension once.** Phone → **播放** (Play) tab → the speaker button → **在 Chromebook 上允许一次**.
+   A page opens on the TV and Chrome asks about the **microphone**: click **Allow** with the Chromebook's
+   touchpad, touchscreen or a mouse (the phone's pointer cannot click Chrome's own prompts). Only the extension
+   gets it, only to read the speaker names; nothing is recorded.
+5. **Use it.** Phone → Play tab → speaker button → **Nest Mini**. Pick **电视 / 默认输出** to switch back.
+   The choice stays for later pages and episodes on this Chromebook.
+
+Later: after a restart the Nest Mini usually reconnects by itself (else clock → Bluetooth → click it). If it
+switches off or goes out of range, the sound falls back to the default output and the phone says so.
+To unpair: Google Home → the Nest Mini → Paired Bluetooth devices → forget the Chromebook.
+
+### 中文：把 Nest Mini 和接电视的 Chromebook 配对（一次）
+
+1. **让 Nest Mini 进入蓝牙配对**：对它说 **"Hey Google，蓝牙配对"**；或者在 **Google Home** App 里：Nest Mini →
+   **设置**（齿轮）→ **音频** → **已配对的蓝牙设备** → **启用配对模式**。如果手机或别的电脑正用蓝牙连着它，先断开。
+2. **在 Chromebook 上配对**：点右下角的时间 → 打开**蓝牙** → 点旁边的箭头（或 **设置 → 蓝牙 → 配对新设备**）→
+   选 Nest Mini（名字和 Home App 里一样，比如"客厅音箱"）→ **配对** → 等到显示**已连接**。
+3. **让电视继续当默认声音输出**（可选）：ChromeOS 连上蓝牙音箱后会把所有声音切过去。想平时还用电视出声：
+   点时间 → 音量条旁边的箭头 → **输出** → 选电视（HDMI）。
+4. **给扩展允许一次**：手机 → **播放**页 → 喇叭按钮 → **在 Chromebook 上允许一次**。电视上会打开一个页面，Chrome
+   询问**麦克风**：用 Chromebook 的触控板、触摸屏或鼠标点**允许**（手机的虚拟指针点不到 Chrome 自己的弹窗）。
+   只给扩展，只用来读取音箱名字，不会录音；视频网站拿不到任何权限。
+5. **使用**：手机 → 播放页 → 喇叭按钮 → 选 **Nest Mini**，画面留在电视上，声音从 Nest 出来；选 **电视 / 默认输出**
+   就切回来。这台 Chromebook 以后的页面、下一集都会沿用。
+
+以后：Chromebook 重启后 Nest Mini 一般会自动重连（没连上就点时间 → 蓝牙 → 点它）。Nest 关机或走出范围时，声音自动
+切回默认输出，手机会提示。取消配对：Google Home → Nest Mini → 已配对的蓝牙设备 → 删除这台 Chromebook。
 
 ## Version number: is GitHub serving my latest code?
 

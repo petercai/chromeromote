@@ -41,14 +41,20 @@
     return pool.reduce((best, v) => (visibleArea(v) > visibleArea(best) ? v : best), pool[0]);
   };
 
-  const snapshot = (v) => ({
-    hasVideo: true,
-    t: v.currentTime,
-    dur: Number.isFinite(v.duration) ? v.duration : null,
-    vol: v.volume,
-    muted: v.muted,
-    paused: v.paused,
-  });
+  // While the audio is routed to another output (design 3.15.10) the element is kept muted on purpose:
+  // the phone sees the routed volume instead, and `routed` tells the worker the route is up.
+  const snapshot = (v) => {
+    const routed = audioRoute.el === v && Boolean(audioRoute.pc);
+    return {
+      hasVideo: true,
+      t: v.currentTime,
+      dur: Number.isFinite(v.duration) ? v.duration : null,
+      vol: routed ? audioRoute.level : v.volume,
+      muted: routed ? audioRoute.level === 0 : v.muted,
+      paused: v.paused,
+      routed,
+    };
+  };
 
   // -------------------------------------------------------------------------
   // Video commands (async because play() returns a promise)
@@ -79,6 +85,12 @@
   };
 
   const setVolume = (v, level) => {
+    if (audioRoute.el === v && audioRoute.pc) {
+      // Routed: the element stays muted; the volume is the output's (offscreen <audio>).
+      audioRoute.level = clamp(level, 0, 1);
+      chrome.runtime.sendMessage({ target: 'offscreen', type: 'sinkVolume', routeId: audioRoute.id, level: audioRoute.level }).catch(() => {});
+      return ok(snapshot(v));
+    }
     v.volume = clamp(level, 0, 1);
     if (level > 0 && v.muted) v.muted = false;
     return ok(snapshot(v));
@@ -332,6 +344,8 @@
     const like = document.querySelector(S.likeRenderer);
     const player = document.querySelector(S.adPlayer);
     const md = navigator.mediaSession && navigator.mediaSession.metadata;
+    const av = document.querySelector(S.avToggle);
+    const avVideo = document.querySelector(S.avVideoButton);
     return {
       items,
       barTitle: text(document, S.barTitle),
@@ -340,7 +354,29 @@
       ad: Boolean(player && player.classList.contains(S.adClass)),
       likeStatus: like ? like.getAttribute('like-status') : null,
       repeatMode: bar ? bar.getAttribute('repeat-mode') : null,
+      av: av ? { disabled: av.hasAttribute(S.avDisabledAttr), videoPressed: Boolean(avVideo && avVideo.getAttribute('aria-pressed') === 'true') } : null,
     };
+  };
+
+  // Q53 "有视频就总是放视频": each new song switches to Video once, as soon as the switch can act
+  // (after an ad). The song a choice was made for (automatic or from the phone) is remembered, so a
+  // song the phone switched back to Song stays on Song.
+  const av = { handledSong: null };
+  const autoVideo = (raw) => {
+    if (!CRMusic.shouldAutoVideo(raw, av.handledSong)) return;
+    av.handledSong = CRMusic.songKey(raw);
+    const res = clickMusic(document.querySelector(CRMusic.CONTROL_SELECTORS.avVideo), 'av_auto', {});
+    log.info('music.av', { mode: 'video', source: 'auto', song: av.handledSong, ok: res.ok });
+  };
+
+  /** Full screen on YouTube Music = its own expanded player (art / video over the page), not our video fill. */
+  const openMusicPlayerPage = () => {
+    const S = CRMusic.SITE;
+    const page = document.querySelector(S.playerPage);
+    if (page && page.hasAttribute(S.playerPageOpenAttr)) return log.debug('music.player_page', { action: 'already_open' });
+    const toggle = document.querySelector(S.playerPageToggle);
+    if (toggle) toggle.click();
+    log[toggle ? 'info' : 'warn']('music.player_page', { action: toggle ? 'opened' : 'toggle_not_found' });
   };
 
   const clickMusic = (el, what, fields) => {
@@ -352,9 +388,20 @@
     setTimeout(pushSummaries, MUSIC_SETTLE_MS);
     return ok();
   };
+  const AV_ACTIONS = Object.freeze({ avSong: 'song', avVideo: 'video' });
   const musicControl = ({ action }) => {
+    if (AV_ACTIONS[action]) {
+      const raw = readMusicRaw();
+      const state = CRMusic.avState(raw.av);
+      if (!state || state.disabled) {
+        log.warn('music.av', { mode: AV_ACTIONS[action], source: 'phone', ok: false, reason: state ? 'disabled' : 'no_toggle' });
+        return fail(ERR.NO_MUSIC, { reason: state ? 'av_disabled' : 'no_av_toggle' });
+      }
+      av.handledSong = CRMusic.songKey(raw); // the phone's choice holds for this song
+      if (state.mode === AV_ACTIONS[action]) return ok();
+    }
     const res = clickMusic(document.querySelector(CRMusic.CONTROL_SELECTORS[action]), action, { action });
-    log.info('music.control', { action, ok: res.ok });
+    log.info(AV_ACTIONS[action] ? 'music.av' : 'music.control', AV_ACTIONS[action] ? { mode: AV_ACTIONS[action], source: 'phone', ok: res.ok } : { action, ok: res.ok });
     return res;
   };
   const musicQueuePlay = ({ index }) => {
@@ -375,7 +422,12 @@
       const { items, p, ranges, title } = readPlaylist();
       return items.length ? CRPlay.summarize(p, ranges, title) : null;
     },
-    music: () => (musicSite ? CRMusic.musicState(readMusicRaw()) : undefined),
+    music: () => {
+      if (!musicSite) return undefined;
+      const raw = readMusicRaw();
+      autoVideo(raw); // read once per tick: the summary and the auto switch see the same page
+      return CRMusic.musicState(raw);
+    },
   });
   const lastSummarySig = {};
   const pushSummaries = () =>
@@ -480,6 +532,85 @@
   };
 
   // -------------------------------------------------------------------------
+  // Audio output routing (design 3.15.10). The page grants no permission: the media element's own
+  // captureStream() goes over a local WebRTC connection (one round trip, no trickle ICE) to the
+  // extension's offscreen document, which plays it on the chosen output (e.g. a Bluetooth Nest) with
+  // setSinkId. The element is muted meanwhile; muting does not silence the captured stream (measured).
+  // -------------------------------------------------------------------------
+  const ICE_GATHER_MAX_MS = 2000;
+  const AUDIO_TRACK_WAIT_MS = 3000;
+  const audioRoute = { id: null, pc: null, el: null, level: 1, prevMuted: false, starting: false };
+
+  const waitFor = (target, event, ms) => new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      target.removeEventListener(event, done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    target.addEventListener(event, done);
+  });
+
+  const stopAudioRoute = (reason) => {
+    if (!audioRoute.pc) return;
+    const { id, el } = audioRoute;
+    try {
+      audioRoute.pc.close();
+    } catch (_) {}
+    if (el && document.contains(el)) el.muted = audioRoute.prevMuted;
+    Object.assign(audioRoute, { id: null, pc: null, el: null });
+    chrome.runtime.sendMessage({ target: 'offscreen', type: 'sinkClose', routeId: id }).catch(() => {});
+    log.info('audio.route_stopped', { route_id: id, reason });
+  };
+
+  const startAudioRoute = async () => {
+    const v = findVideo();
+    if (!v) return fail(ERR.NO_VIDEO);
+    if (audioRoute.pc && audioRoute.el === v && audioRoute.pc.connectionState !== 'failed') return ok({ already: true });
+    if (audioRoute.starting) return ok({ starting: true });
+    audioRoute.starting = true;
+    stopAudioRoute('restart');
+    const started = Date.now();
+    try {
+      const stream = v.captureStream();
+      if (!stream.getAudioTracks().length) await waitFor(stream, 'addtrack', AUDIO_TRACK_WAIT_MS);
+      if (!stream.getAudioTracks().length) {
+        log.warn('audio.route_failed', { reason: 'no_audio_track' });
+        return fail(ERR.AUDIO_FAILED, { reason: 'no_audio_track' });
+      }
+      const pc = new RTCPeerConnection(); // same machine: host candidates only, no STUN needed
+      stream.getAudioTracks().forEach((t) => pc.addTrack(t, stream));
+      await pc.setLocalDescription(await pc.createOffer());
+      if (pc.iceGatheringState !== 'complete') await waitFor(pc, 'icegatheringstatechange', ICE_GATHER_MAX_MS);
+      const id = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const level = v.muted ? 0 : v.volume;
+      const answer = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'sinkOffer', routeId: id, sdp: pc.localDescription.toJSON(), level });
+      if (!answer || !answer.ok) {
+        pc.close();
+        log.warn('audio.route_failed', { reason: (answer && answer.reason) || 'no_answer' });
+        return fail(ERR.AUDIO_FAILED, { reason: (answer && answer.reason) || 'no_answer' });
+      }
+      await pc.setRemoteDescription(answer.sdp);
+      Object.assign(audioRoute, { id, pc, el: v, level, prevMuted: v.muted });
+      v.muted = true;
+      log.info('audio.route_started', { route_id: id, label: answer.label || null, level, latency_ms: Date.now() - started });
+      return ok({ label: answer.label || null });
+    } catch (e) {
+      log.warn('audio.route_failed', { reason: 'exception', error: String(e && e.message) });
+      return fail(ERR.AUDIO_FAILED, { reason: String(e && e.name) });
+    } finally {
+      audioRoute.starting = false;
+    }
+  };
+
+  /** Keep the route healthy each tick: re-mute if the site unmuted, restart if the element was replaced. */
+  const checkAudioRoute = (v) => {
+    if (!audioRoute.pc) return;
+    if (!v || audioRoute.el !== v || audioRoute.pc.connectionState === 'failed') return stopAudioRoute(!v ? 'no_video' : audioRoute.el !== v ? 'element_changed' : 'failed');
+    if (!v.muted) v.muted = true; // e.g. the site restored its saved volume on a new video
+  };
+
+  // -------------------------------------------------------------------------
   // Message handling
   // -------------------------------------------------------------------------
   const handleExec = (msg, sendResponse) => {
@@ -521,7 +652,23 @@
       sendResponse(ok());
       return false;
     }
+    // Audio routing goes to every frame; only the frame owning the player acts (others stay silent).
+    if (message.type === 'audioRoute') {
+      if (!message.on) {
+        stopAudioRoute('phone');
+        return false;
+      }
+      if (!findVideo()) return false;
+      startAudioRoute().then(sendResponse);
+      return true;
+    }
     if (message.type === 'fill') {
+      if (musicSite) {
+        // YouTube Music keeps its own player UI on the TV (design 3.15.11): expand it, never fill the video.
+        if (message.on) openMusicPlayerPage();
+        sendResponse(ok());
+        return false;
+      }
       setFill(Boolean(message.on));
       if (isTop) sendResponse(ok());
       return false;
@@ -537,6 +684,7 @@
     try {
       pushSummaries();
       const v = findVideo();
+      checkAudioRoute(v);
       if (!v && !hadVideo) return;
       hadVideo = Boolean(v);
       chrome.runtime.sendMessage({ type: 'videoState', state: v ? snapshot(v) : { hasVideo: false } }).catch(() => {});

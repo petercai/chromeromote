@@ -80,6 +80,8 @@
     [ERR.YT_FAILED]: 'YouTube 读取失败',
     [ERR.NO_MUSIC]: '没有找到 YouTube Music 的播放器(页面可能改版了)',
     [ERR.NO_ZOOM]: '这个页面不能缩放(Chrome 内部页面)',
+    [ERR.NO_AUDIO_SETUP]: '需要先在 Chromebook 上允许一次(声音面板里的按钮)',
+    [ERR.AUDIO_FAILED]: '声音切换失败',
   });
 
   // This page's version; the extension's comes with WELCOME (app.pairing.version).
@@ -193,6 +195,15 @@
     zoomBusy: false, // one zoom command at a time: each step starts from the factor the last one set
     music: null, // YouTube Music now-playing summary pushed with the video state (design 3.13.14)
     musicQueueSig: null, // queue list is rebuilt only when this changes
+    // Design 3.15: mirror site (S-A dropdown), audio output (N-A), TV full screen, music tabs (M-A)
+    site: { current: null, preferred: CR.DEFAULT_SITE }, // pushed with the state
+    siteMenu: false,
+    audio: { label: null, lost: null }, // chosen output (null = TV / default), last lost device; pushed
+    audioSheet: null, // {loading, data: {outputs, current, needsSetup}, error} while the sheet is open
+    fullscreen: false, // the TV window is full screen (pushed)
+    musicTab: 'queue', // 'queue' | 'lyrics' | 'related'
+    musicExtra: { lyrics: { videoId: null }, related: { videoId: null } }, // {videoId, loading, data, error} per tab
+    relatedSig: null,
     plSheet: null, // {loading, data, error} while the episode sheet is open
     switcherOpen: false,
     showHelp: false, // "add Chromebook" instructions over a paired session
@@ -328,6 +339,8 @@
     renderYtNow();
     renderMusic();
     renderZoom();
+    renderSite();
+    renderAudio();
   };
 
   // Zoom stepper: the number is what Chrome reports; orange + "点按恢复" while not at 100%.
@@ -443,6 +456,13 @@
     app.music = state.music || null;
     app.url = state.url || app.url;
     if (typeof state.zoom === 'number') app.zoom = state.zoom;
+    if (state.site) app.site = state.site;
+    app.fullscreen = Boolean(state.fullscreen);
+    if (state.audio) {
+      // The chosen device vanished (Nest off / out of range): the extension fell back to the default output.
+      if (state.audio.lost && state.audio.lost !== app.audio.lost) toast(`${shortOutput(state.audio.lost)} 已断开,声音已切回默认输出`);
+      app.audio = state.audio;
+    }
     // New page on the TV: refresh the library once so the ★ reflects this page.
     const key = entryKey(app.url);
     if (key && key !== app.libKey) refreshLibrary();
@@ -575,8 +595,9 @@
     });
   };
 
-  const SLOW_CMDS = Object.freeze([CMD.PLAYLIST_GET, CMD.PLAYLIST_OPEN, CMD.PLAYLIST_STEP]);
-  const YT_CMDS = Object.freeze([CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_OPEN, CMD.YT_WATCH_LATER]);
+  // Audio commands start a capture + local WebRTC connection on the TV (a few seconds at most).
+  const SLOW_CMDS = Object.freeze([CMD.PLAYLIST_GET, CMD.PLAYLIST_OPEN, CMD.PLAYLIST_STEP, CMD.AUDIO_OUTPUTS, CMD.AUDIO_OUTPUT_SET, CMD.AUDIO_SETUP, CMD.SITE_SWITCH]);
+  const YT_CMDS = Object.freeze([CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_OPEN, CMD.YT_WATCH_LATER, CMD.MUSIC_LYRICS, CMD.MUSIC_RELATED]);
   const ackTimeoutOf = (cmd) => (YT_CMDS.includes(cmd) ? YT_ACK_TIMEOUT_MS : SLOW_CMDS.includes(cmd) ? SLOW_ACK_TIMEOUT_MS : ACK_TIMEOUT_MS);
 
   /** Send a command; resolves with the reply (or a synthetic TIMEOUT reply). Never rejects. */
@@ -949,6 +970,12 @@
   // A music song keeps playing through its own list (album, playlist, liked songs or radio).
   const openYtCard = async (c, view) => {
     const music = isMusicView(view);
+    // From the Play tab's "相关" (design 3.15.11): a playlist / album / artist opens in the YouTube tab's music source.
+    if (c.kind === 'playlist' && view && view.related) {
+      switchTab('youtube');
+      setYtSource(YT_SOURCE.MUSIC);
+      return pushYtView(YT_SECTION.MUSIC_LIST, c.id, c.title);
+    }
     if (c.kind === 'playlist') return pushYtView(music ? YT_SECTION.MUSIC_LIST : YT_SECTION.PLAYLIST, c.id, c.title);
     log.info('ui.yt_open', { video_id: c.id, from: view ? view.section : 'upNext', music });
     const listId = music ? c.playlistId : view && view.section === YT_SECTION.PLAYLIST ? view.id : null;
@@ -1046,7 +1073,27 @@
       b.classList.toggle('active', on);
       b.setAttribute('aria-selected', String(on));
     };
-    document.querySelectorAll('#ytSource button').forEach((b) => toggleOn(b, b.dataset.ytSource === app.ytSource));
+    document.querySelectorAll('#musicAv button').forEach((b) =>
+    b.addEventListener('click', async () => {
+      log.info('ui.music_av', { action: b.dataset.av });
+      const res = await act(CMD.MUSIC_CONTROL, { action: b.dataset.av });
+      if (res.ok) toast(b.dataset.av === 'avVideo' ? '电视上切到 MV 视频' : '电视上切到只放歌曲', 'ok');
+    })
+  );
+  document.querySelectorAll('.music-tabbar button').forEach((b) => b.addEventListener('click', () => setMusicTab(b.dataset.musicTab)));
+  $('siteBtn').addEventListener('click', () => toggleSiteMenu());
+  // A tap anywhere else closes the site menu.
+  document.addEventListener('click', (e) => {
+    if (app.siteMenu && !$('siteMenu').contains(e.target) && !$('siteBtn').contains(e.target)) toggleSiteMenu(false);
+  });
+  $('audioBtn').addEventListener('click', openAudioSheet);
+  $('audioClose').addEventListener('click', () => closeAudioSheet('close_button'));
+  $('audioSetupBtn').addEventListener('click', startAudioSetup);
+  $('audioSheet').addEventListener('click', (e) => {
+    if (e.target === $('audioSheet')) closeAudioSheet('backdrop');
+  });
+
+  document.querySelectorAll('#ytSource button').forEach((b) => toggleOn(b, b.dataset.ytSource === app.ytSource));
     document.querySelectorAll('.yt-chips').forEach((group) => {
       group.hidden = nested || group.dataset.ytSource !== app.ytSource;
     });
@@ -1146,12 +1193,24 @@
     return li;
   };
 
+  const renderMusicQueue = (m) => {
+    const sig = JSON.stringify(m.queue);
+    if (sig === app.musicQueueSig) return;
+    app.musicQueueSig = sig;
+    setChildren($('musicQueueList'), m.queue.map(musicRow));
+    // Keep the playing song in view (one row of context above it).
+    const cur = $('musicQueueList').querySelector('.music-row.current');
+    if (cur && app.musicTab === 'queue') $('musicQueue').scrollTop = Math.max(0, cur.offsetTop - $('musicQueue').offsetTop - 60);
+  };
+
   const renderMusic = () => {
     const m = app.status === 'connected' && CRYt.isMusicUrl(app.url) ? app.music : null;
     $('tab-play').classList.toggle('music-mode', Boolean(m));
     $('musicPanel').hidden = !m;
     $('musicControls').hidden = !m;
-    $('musicQueue').hidden = !m || m.queue.length === 0;
+    $('musicTabs').hidden = !m;
+    $('musicFs').hidden = !m;
+    $('musicAv').hidden = !m || !m.av;
     if (!m) {
       app.musicQueueSig = null;
       return;
@@ -1165,13 +1224,238 @@
     $('musicRepeatText').textContent = MUSIC_REPEAT_TEXT[m.repeat] || '关';
     $('musicRepeat').classList.toggle('on', m.repeat !== 'NONE');
     $('musicRepeat').setAttribute('aria-label', `循环模式:${MUSIC_REPEAT_TEXT[m.repeat] || '关'},点一下切换`);
-    const sig = JSON.stringify(m.queue);
-    if (sig === app.musicQueueSig) return;
-    app.musicQueueSig = sig;
-    setChildren($('musicQueueList'), m.queue.map(musicRow));
-    // Keep the playing song in view (one row of context above it).
-    const cur = $('musicQueueList').querySelector('.music-row.current');
-    if (cur) $('musicQueue').scrollTop = Math.max(0, cur.offsetTop - $('musicQueue').offsetTop - 60);
+    // TV full screen (Q51: the TV only; the phone is just the remote).
+    $('musicFsText').textContent = app.fullscreen ? '退出全屏' : '全屏';
+    $('musicFs').setAttribute('aria-label', app.fullscreen ? '电视退出全屏' : '电视全屏');
+    $('musicFs').classList.toggle('on', app.fullscreen);
+    // "歌曲 / 视频": disabled while the TV's switch cannot act (ad, single-version track).
+    if (m.av) {
+      document.querySelectorAll('#musicAv button').forEach((b) => {
+        const on = (b.dataset.av === 'avVideo') === (m.av.mode === 'video');
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', String(on));
+        b.disabled = m.av.disabled || m.ad;
+      });
+    }
+    renderMusicQueue(m);
+    ensureMusicExtra();
+    renderMusicTab(m);
+  };
+
+  // ---- Music tabs "待播 / 歌词 / 相关" (design 3.15, option M-A) ----
+  const MUSIC_EXTRA_CMDS = Object.freeze({ lyrics: CMD.MUSIC_LYRICS, related: CMD.MUSIC_RELATED });
+  const RELATED_VIEW = Object.freeze({ section: YT_SECTION.MUSIC_HOME, related: true }); // music-style cards opened from the Play tab
+  const currentSongId = () => (CRYt.isMusicUrl(app.url) ? CRYt.videoIdOf(app.url) : null);
+
+  /** Load lyrics / related for the song now playing: once per song, only for the tab shown. */
+  const ensureMusicExtra = () => {
+    const kind = app.musicTab;
+    const videoId = currentSongId();
+    if (!MUSIC_EXTRA_CMDS[kind] || !videoId || app.musicExtra[kind].videoId === videoId) return;
+    app.musicExtra[kind] = { videoId, loading: true, data: null, error: null };
+    send(MUSIC_EXTRA_CMDS[kind], { videoId }).then((res) => {
+      if (app.musicExtra[kind].videoId !== videoId) return; // the TV moved to another song meanwhile
+      app.musicExtra[kind] = res.ok
+        ? { videoId, loading: false, data: res.data, error: null }
+        : { videoId, loading: false, data: null, error: errorText(res.error_code, '读取失败') };
+      log.info('ui.music_extra', { kind, video_id: videoId, ok: res.ok, error_code: res.error_code });
+      renderMusic();
+    });
+  };
+
+  const relatedShelf = (shelf) => {
+    const box = el('section', 'related-shelf');
+    box.append(el('h3', 'up-next-head', shelf.title || '相关'));
+    const ul = el('ul', 'yt-list');
+    setChildren(ul, shelf.items.map((c) => ytCard(c, RELATED_VIEW)));
+    box.append(ul);
+    return box;
+  };
+
+  const musicTabStatus = (m, tab, extra) => {
+    if (tab === 'queue') return m.queue.length ? '' : '待播是空的';
+    if (!currentSongId()) return '读不到当前歌曲';
+    if (extra.loading || extra.videoId !== currentSongId()) return tab === 'lyrics' ? '正在读取歌词…' : '正在读取相关内容…';
+    if (extra.error) return extra.error;
+    if (tab === 'lyrics' && !(extra.data && extra.data.text)) return '这首歌没有歌词';
+    if (tab === 'related' && !(extra.data && extra.data.shelves.length)) return '没有相关内容';
+    return '';
+  };
+
+  const renderMusicTab = (m) => {
+    const tab = app.musicTab;
+    document.querySelectorAll('.music-tabbar button').forEach((b) => {
+      const on = b.dataset.musicTab === tab;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', String(on));
+    });
+    const extra = app.musicExtra[tab] || {};
+    const status = musicTabStatus(m, tab, extra);
+    $('musicTabStatus').hidden = !status;
+    $('musicTabStatus').textContent = status;
+    $('musicQueueList').hidden = tab !== 'queue';
+    const lyrics = tab === 'lyrics' && !status ? extra.data : null;
+    $('musicLyrics').hidden = !lyrics;
+    if (lyrics) {
+      $('musicLyricsText').textContent = lyrics.text;
+      $('musicLyricsSource').textContent = lyrics.source || '';
+    }
+    const related = tab === 'related' && !status ? extra.data : null;
+    $('musicRelated').hidden = !related;
+    const sig = related ? `${extra.videoId}:${related.shelves.length}` : null;
+    if (related && sig !== app.relatedSig) setChildren($('musicRelated'), related.shelves.map(relatedShelf));
+    app.relatedSig = sig;
+  };
+
+  const setMusicTab = (tab) => {
+    if (tab === app.musicTab) return;
+    log.info('ui.music_tab', { tab });
+    app.musicTab = tab;
+    $('musicQueue').scrollTop = 0;
+    renderMusic();
+  };
+
+  // ---- Site dropdown (design 3.15, option S-A): kubb.tv / iyf.tv ----
+  const siteLabel = (id) => (CR.siteById(id) || CR.siteById(CR.DEFAULT_SITE)).label;
+  const shownSite = () => app.site.current || app.site.preferred;
+
+  const siteOption = (s) => {
+    const on = s.id === shownSite();
+    const b = el('button', `site-option${on ? ' on' : ''}`);
+    b.setAttribute('role', 'menuitemradio');
+    b.setAttribute('aria-checked', String(on));
+    b.dataset.site = s.id;
+    const text = el('span', 'site-option-text');
+    text.append(el('span', 't', s.label), el('span', 's', `${s.note}${s.id === app.site.preferred ? ' · 默认' : ''}`));
+    b.append(text);
+    if (on) b.append(el('span', 'site-check', '✓'));
+    b.addEventListener('click', () => switchSite(s.id));
+    return b;
+  };
+
+  const renderSite = () => {
+    const label = siteLabel(shownSite());
+    $('siteName').textContent = label;
+    $('tabBrowseLabel').textContent = label;
+    $('tab-browse').setAttribute('aria-label', label);
+    let addr = '';
+    if (app.status === 'connected' && app.url) {
+      try {
+        const u = new URL(app.url);
+        addr = app.site.current ? `电视:${u.hostname.replace(/^www\./, '')}${u.pathname}` : '电视不在这个网站上';
+      } catch (_) {
+        addr = '';
+      }
+    }
+    $('siteAddr').textContent = addr;
+    $('siteBtn').disabled = app.status !== 'connected';
+    $('siteBtn').setAttribute('aria-expanded', String(app.siteMenu));
+    $('siteMenu').hidden = !app.siteMenu;
+    if (app.siteMenu) setChildren($('siteOptions'), CR.SITE_MIRRORS.map(siteOption));
+  };
+
+  const toggleSiteMenu = (open) => {
+    app.siteMenu = typeof open === 'boolean' ? open : !app.siteMenu;
+    if (app.siteMenu) log.info('ui.site_menu', { current: app.site.current, preferred: app.site.preferred });
+    renderSite();
+  };
+
+  const switchSite = async (id) => {
+    toggleSiteMenu(false);
+    log.info('ui.site_switch', { to: id, from: app.site.current });
+    const moved = Boolean(app.site.current) && app.site.current !== id;
+    const res = await act(CMD.SITE_SWITCH, { site: id });
+    if (!res.ok) return;
+    app.site = { ...app.site, preferred: id };
+    renderSite();
+    toast(moved ? `电视已切换到 ${siteLabel(id)},接着播放` : `已选择 ${siteLabel(id)}`, 'ok');
+  };
+
+  // ---- Audio output (design 3.15.10): pick the Chromebook output, e.g. a Bluetooth Nest Mini ----
+  const AUDIO_KIND_TEXT = Object.freeze({ default: '系统默认', bluetooth: '蓝牙', hdmi: 'HDMI', builtin: '内置', other: '其他' });
+  /** "Nest Mini (Bluetooth)" -> "Nest Mini"; long names are clipped for the pill. */
+  const shortOutput = (label) => {
+    const t = String(label || '').replace(/\s*\((bluetooth|蓝牙)\)\s*$/i, '').trim();
+    return t.length > 18 ? `${t.slice(0, 17)}…` : t;
+  };
+
+  const renderAudio = () => {
+    const label = app.audio.label;
+    $('audioName').textContent = label ? shortOutput(label) : '电视';
+    $('audioBtn').classList.toggle('on', Boolean(label));
+    $('audioBtn').setAttribute('aria-label', `声音输出:${label ? shortOutput(label) : '电视(默认)'},点一下选择`);
+    $('audioBtn').disabled = app.status !== 'connected';
+    renderAudioSheet();
+  };
+
+  const audioRow = (o, current) => {
+    const on = o.id === current;
+    const li = el('li');
+    const b = el('button', `audio-row${on ? ' on' : ''}`);
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(on));
+    b.dataset.kind = o.kind;
+    const text = el('span', 'audio-row-text');
+    text.append(el('span', 't', o.id ? o.label : '电视 / 默认输出'), el('span', 's', o.id ? AUDIO_KIND_TEXT[o.kind] || '' : o.label || AUDIO_KIND_TEXT.default));
+    b.append(text);
+    if (on) b.append(el('span', 'site-check', '✓'));
+    b.addEventListener('click', () => chooseAudio(o));
+    li.append(b);
+    return li;
+  };
+
+  const renderAudioSheet = () => {
+    const sheet = app.audioSheet;
+    $('audioSheet').hidden = !sheet;
+    if (!sheet) return;
+    const d = sheet.data;
+    const status = sheet.loading ? '正在读取 Chromebook 的声音输出…' : sheet.error || (d && d.needsSetup ? '还读不到设备名字:需要在 Chromebook 上允许一次。' : '');
+    $('audioStatus').hidden = !status;
+    $('audioStatus').textContent = status;
+    $('audioSetupBtn').hidden = !(d && d.needsSetup);
+    const outputs = d ? (d.needsSetup ? d.outputs.filter((o) => !o.id) : d.outputs) : [];
+    setChildren($('audioList'), outputs.map((o) => audioRow(o, d.current)));
+  };
+
+  const openAudioSheet = async () => {
+    log.info('ui.audio_sheet', { action: 'open', current: app.audio.label });
+    app.audioSheet = { loading: true, data: null, error: null };
+    renderAudioSheet();
+    const res = await send(CMD.AUDIO_OUTPUTS);
+    if (!app.audioSheet) return; // closed meanwhile
+    app.audioSheet = res.ok ? { loading: false, data: res.data, error: null } : { loading: false, data: null, error: errorText(res.error_code, '读取失败') };
+    renderAudioSheet();
+  };
+
+  const closeAudioSheet = (reason) => {
+    if (!app.audioSheet) return;
+    log.info('ui.audio_sheet', { action: 'close', reason });
+    app.audioSheet = null;
+    renderAudioSheet();
+  };
+
+  const chooseAudio = async (o) => {
+    log.info('ui.audio_choose', { label: o.label, kind: o.kind, default: !o.id });
+    app.audioSheet = { ...app.audioSheet, loading: true };
+    renderAudioSheet();
+    const res = await act(CMD.AUDIO_OUTPUT_SET, { id: o.id });
+    if (!res.ok) {
+      if (res.error_code === ERR.NO_AUDIO_SETUP) return openAudioSheet();
+      if (app.audioSheet) app.audioSheet = { ...app.audioSheet, loading: false };
+      return renderAudioSheet();
+    }
+    app.audio = { label: o.id ? res.data.label : null, lost: null };
+    closeAudioSheet('picked');
+    renderAudio();
+    toast(o.id ? `声音已转到 ${shortOutput(res.data.label)},画面留在电视上` : '声音已切回电视', 'ok');
+  };
+
+  const startAudioSetup = async () => {
+    log.info('ui.audio_setup');
+    const res = await act(CMD.AUDIO_SETUP);
+    if (!res.ok) return;
+    if (app.audioSheet) app.audioSheet = { ...app.audioSheet, error: '请在电视上点“允许”(用 Chromebook 的触控板或鼠标),然后重新打开这个面板。' };
+    renderAudioSheet();
   };
 
   document.querySelectorAll('button[data-music]').forEach((b) =>

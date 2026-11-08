@@ -11,12 +11,14 @@
 (function (root) {
   'use strict';
 
-  // Site adapters (pure data). iyf.tv selectors measured 2026-10-31 (implementation notes, iteration 18).
+  // Site adapters (pure data). iyf.tv selectors measured 2026-10-31 (implementation notes, iteration 18);
+  // kubb.tv is the same app on a new domain (design 3.15), so one adapter matches every mirror
+  // (CR.mirrorOf: lib/protocol.js is loaded first everywhere).
   // Ranges: the visible nav lives in `-inner`; a zero-height duplicate nav sits outside it.
   const SITE_ADAPTERS = Object.freeze([
     Object.freeze({
-      site: 'iyf.tv',
-      hostRe: /(^|\.)iyf\.tv$/i,
+      site: 'iyf.tv / kubb.tv',
+      matches: (hostname) => Boolean(root.CR && root.CR.mirrorOf(hostname)),
       item: 'app-list .n-media-list a.media-button',
       idParam: 'id',
       rangeButton: '.medias-selector-expandable-tabs-inner .medias-selector-expandable-tabs-nav > button',
@@ -24,7 +26,7 @@
     }),
   ]);
 
-  const adapterFor = (hostname) => SITE_ADAPTERS.find((a) => a.hostRe.test(String(hostname || ''))) || null;
+  const adapterFor = (hostname) => SITE_ADAPTERS.find((a) => a.matches(String(hostname || ''))) || null;
 
   /** Episode id from a link (relative or absolute); null when missing. */
   const itemId = (href, idParam) => {

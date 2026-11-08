@@ -14,7 +14,7 @@
  */
 importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js', 'lib/library.js', 'lib/youtube.js');
 
-const { CMD, ERR, TAB_NEED, ok, fail, executorOf, tabNeedOf, buildPairUrl, newKey, DEFAULT_HOME_URL } = CR;
+const { CMD, ERR, TAB_NEED, ok, fail, executorOf, tabNeedOf, buildPairUrl, newKey } = CR;
 
 // ---------------------------------------------------------------------------
 // Immutable settings
@@ -103,8 +103,8 @@ const ensureOffscreen = async () => {
   creatingOffscreen = chrome.offscreen
     .createDocument({
       url: OFFSCREEN_URL,
-      reasons: ['WEB_RTC'],
-      justification: 'Hold the WebRTC data channel to the phone remote.',
+      reasons: ['WEB_RTC', 'AUDIO_PLAYBACK'],
+      justification: 'Hold the WebRTC data channel to the phone remote; play the TV page audio on a chosen output.',
     })
     .then(() => log.info('offscreen.created'))
     .catch((e) => log.error('offscreen.create_failed', { error: String(e) }))
@@ -382,12 +382,134 @@ const LIBRARY_ACTIONS = Object.freeze({
   [CMD.OPEN_ENTRY]: async (tab, args) => {
     const key = CRLib.entryKey(args.url);
     if (!key) return fail(ERR.BAD_MESSAGE);
+    // Saved entries are on the canonical host: open them on the preferred mirror (design 3.15.3).
+    const url = CR.onSite(args.url, site.preferred);
     if (args.time > 0) await chrome.storage.session.set({ [pendingSeekKey(tab.id)]: { key, time: args.time } });
-    await chrome.tabs.update(tab.id, { url: args.url });
-    log.info('library.open', { tab_id: tab.id, key, time: args.time || 0 });
+    await chrome.tabs.update(tab.id, { url });
+    log.info('library.open', { tab_id: tab.id, key, time: args.time || 0, site: CR.mirrorOfUrl(url) ? site.preferred : null });
     return ok();
   },
 });
+
+// ---------------------------------------------------------------------------
+// Mirror domains (design 3.15, option S-A): the preferred site is synced across the user's Chromebooks
+// (chrome.storage.sync) and used by Home, library entries and the phone's dropdown. Switching keeps the
+// page: same path on the other domain, resumed at the same time (the pending-seek path of the library).
+// ---------------------------------------------------------------------------
+const site = { preferred: CR.DEFAULT_SITE }; // cache of chrome.storage.sync 'sitePreferred'
+
+const loadSitePreference = async () => {
+  const { sitePreferred } = await syncStore.get('sitePreferred');
+  site.preferred = CR.siteById(sitePreferred) ? sitePreferred : CR.DEFAULT_SITE;
+  return site.preferred;
+};
+
+/** Site part of the phone state: the mirror the TV is on (null elsewhere) and the preferred one. */
+const siteStateOf = (url) => {
+  const m = CR.mirrorOfUrl(url);
+  return { current: m ? m.id : null, preferred: site.preferred };
+};
+
+const siteSwitch = async (tab, { site: to }) => {
+  const from = CR.mirrorOfUrl(tab.url);
+  // Always record the explicit choice (also when it equals the default), so every synced Chromebook follows it.
+  const res = await syncWrite('set', { sitePreferred: to }, { reason: 'site_preferred' });
+  if (!res.ok) log.warn('site.preferred_not_synced', { site: to }); // still switch on this machine
+  site.preferred = to;
+  if (from && from.id === to) {
+    log.info('site.switch', { tab_id: tab.id, from: from.id, to, unchanged: true });
+    return ok({ url: tab.url });
+  }
+  const url = from ? CR.onSite(tab.url, to) : CR.siteHome(to);
+  const state = lastVideoByTab.get(tab.id);
+  const time = from && state && state.hasVideo && state.t > 0 ? state.t : 0;
+  if (time > 0) await chrome.storage.session.set({ [pendingSeekKey(tab.id)]: { key: CRLib.entryKey(url), time } });
+  await chrome.tabs.update(tab.id, { url });
+  log.info('site.switch', { tab_id: tab.id, from: from ? from.id : null, to, path: from ? new URL(url).pathname : '/', resume_at: Math.floor(time) });
+  return ok({ url });
+};
+
+// ---------------------------------------------------------------------------
+// Audio output (design 3.15.10, N-A revised): the TV page's media plays on a chosen output (a Bluetooth
+// Nest Mini, HDMI, built-in speakers). The choice is per Chromebook (Bluetooth pairing is per machine):
+// chrome.storage.local 'audioSink' {id, label}; '' = the default output = no routing. Every page that
+// reports a video while a sink is chosen gets routed (content.js captureStream -> offscreen-audio.js).
+// ---------------------------------------------------------------------------
+const AUDIO_ROUTE_RETRY_MS = 5000;
+// cache of 'audioSink' + the last lost device; loaded = the cache was read (a restarted worker must not
+// stop a running route because its cache still says "default").
+const audio = { sink: { id: '', label: null }, lost: null, loaded: false };
+const audioRouteAsked = new Map(); // tabId -> ts of the last route request (no request storm while it starts)
+
+const loadAudioSink = async () => {
+  const { audioSink } = await chrome.storage.local.get('audioSink');
+  audio.sink = audioSink && typeof audioSink.id === 'string' ? audioSink : { id: '', label: null };
+  audio.loaded = true;
+  return audio.sink;
+};
+
+const toOffscreen = async (payload) => {
+  await ensureOffscreen();
+  return chrome.runtime.sendMessage({ target: 'offscreen', ...payload });
+};
+
+/** Ask a tab to start / stop routing (all frames; the one with the player answers). */
+const requestAudioRoute = async (tab, on, reason) => {
+  if (on) {
+    audioRouteAsked.set(tab.id, Date.now());
+    // A recreated offscreen document starts on the default output: tell it the chosen one first.
+    await toOffscreen({ type: 'sinkSet', id: audio.sink.id, label: audio.sink.label }).catch((e) => log.warn('audio.sink_restore_failed', { error: String(e) }));
+  } else audioRouteAsked.delete(tab.id);
+  const res = await sendToTab(tab.id, { type: 'audioRoute', on }).catch((e) => fail(ERR.AUDIO_FAILED, { reason: String(e && e.message) }));
+  log[res && res.ok === false ? 'warn' : 'info']('audio.route_request', { tab_id: tab.id, on, reason, ok: res ? res.ok !== false : null, error_code: res && res.errorCode, detail: res && res.data && res.data.reason });
+  return res;
+};
+
+/** Called with every video state of the TV tab: start the route when a sink is chosen and it is not up. */
+const syncAudioRoute = (tab, state) => {
+  if (!state.hasVideo || !audio.loaded) return;
+  const want = Boolean(audio.sink.id);
+  if (want && !state.routed && Date.now() - (audioRouteAsked.get(tab.id) || 0) > AUDIO_ROUTE_RETRY_MS) requestAudioRoute(tab, true, 'state');
+  if (!want && state.routed) requestAudioRoute(tab, false, 'state');
+};
+
+const audioOutputs = async () => {
+  const res = await toOffscreen({ type: 'sinkList' }).catch((e) => ({ error: String(e && e.message) }));
+  if (!res || res.error) return fail(ERR.AUDIO_FAILED, { reason: (res && res.error) || 'offscreen_unreachable' });
+  log.info('audio.outputs', { count: res.outputs.length, kinds: res.outputs.map((o) => o.kind), needs_setup: res.needsSetup });
+  return ok({ outputs: res.outputs, current: audio.sink.id, needsSetup: res.needsSetup });
+};
+
+const audioOutputSet = async (tab, { id }) => {
+  let label = null;
+  if (id) {
+    const list = await audioOutputs();
+    if (!list.ok) return list;
+    if (list.data.needsSetup) return fail(ERR.NO_AUDIO_SETUP);
+    const device = list.data.outputs.find((o) => o.id === id);
+    if (!device) return fail(ERR.AUDIO_FAILED, { reason: 'unknown_device' });
+    label = device.label;
+  }
+  const res = await toOffscreen({ type: 'sinkSet', id, label }).catch((e) => ({ ok: false, reason: String(e && e.message) }));
+  if (!res || !res.ok) {
+    log.warn('audio.sink_set_failed', { label, reason: res && res.reason });
+    return fail(ERR.AUDIO_FAILED, { reason: (res && res.reason) || 'sink_set_failed' });
+  }
+  audio.sink = { id, label };
+  audio.lost = null;
+  await chrome.storage.local.set({ audioSink: audio.sink });
+  log.info('audio.sink_chosen', { label, default: !id });
+  // Apply to the TV's page now instead of waiting for its next state.
+  const target = tab || (await getTargetTab());
+  if (target) await requestAudioRoute(target, Boolean(id), 'phone');
+  return ok({ label });
+};
+
+const audioSetup = async () => {
+  const tab = await chrome.tabs.create({ url: chrome.runtime.getURL('audio-setup.html'), active: true });
+  log.info('audio.setup_opened', { tab_id: tab.id });
+  return ok();
+};
 
 // ---------------------------------------------------------------------------
 // YouTube catalog (design 3.13, option A). Requests go to InnerTube (the API youtube.com's own pages
@@ -534,7 +656,41 @@ const ytWatchLater = async ({ videoId }) => {
   return res.ok ? fail(CRYt.isLoggedOut(res.data) ? ERR.YT_SIGNED_OUT : ERR.YT_FAILED, { reason: String(res.data.status || 'not_saved') }) : res;
 };
 
+// YouTube Music "歌词 / 相关" (design 3.15.11): `next` names both tabs by a browse id; read in the music
+// data tab, so the TV's own page (and its Lyrics tab) is never switched.
+const musicTab = async (videoId, which) => {
+  const next = await ytRequest('next', { videoId }, CR.YT_SECTION.MUSIC_HOME);
+  if (!next.ok) return next;
+  const browseId = CRYt.musicTabIds(next.data)[which];
+  if (!browseId) {
+    log.info('music.tab_missing', { video_id: videoId, which });
+    return ok(null);
+  }
+  const res = await ytRequest('browse', { browseId }, CR.YT_SECTION.MUSIC_HOME);
+  return res.ok ? ok(res.data) : res;
+};
+
+const musicLyrics = async ({ videoId }) => {
+  const started = Date.now();
+  const res = await musicTab(videoId, 'lyrics');
+  if (!res.ok) return res;
+  const lyrics = res.data ? CRYt.parseLyrics(res.data) : null;
+  log.info('music.lyrics', { video_id: videoId, has_lyrics: Boolean(lyrics), latency_ms: Date.now() - started });
+  return ok(lyrics || { text: null, source: null });
+};
+
+const musicRelated = async ({ videoId }) => {
+  const started = Date.now();
+  const res = await musicTab(videoId, 'related');
+  if (!res.ok) return res;
+  const shelves = res.data ? CRYt.parseRelated(res.data) : [];
+  log.info('music.related', { video_id: videoId, shelves: shelves.length, items: shelves.reduce((n, s) => n + s.items.length, 0), latency_ms: Date.now() - started });
+  return ok({ shelves });
+};
+
 const YOUTUBE_ACTIONS = Object.freeze({
+  [CMD.MUSIC_LYRICS]: (tab, args) => musicLyrics(args),
+  [CMD.MUSIC_RELATED]: (tab, args) => musicRelated(args),
   [CMD.YT_BROWSE]: (tab, args) => ytBrowse(args),
   [CMD.YT_UP_NEXT]: (tab, args) => ytUpNext(args),
   [CMD.YT_OPEN]: (tab, args) => ytOpen(tab, args),
@@ -589,9 +745,13 @@ const BROWSER_ACTIONS = Object.freeze({
   [CMD.BACK]: (tab) => historyNavigate(tab, -1),
   [CMD.FORWARD]: (tab) => historyNavigate(tab, 1),
   [CMD.RELOAD]: (tab) => chrome.tabs.reload(tab.id).then(() => ok()),
-  [CMD.HOME]: (tab) => chrome.tabs.update(tab.id, { url: DEFAULT_HOME_URL }).then(() => ok()),
+  [CMD.HOME]: (tab) => chrome.tabs.update(tab.id, { url: CR.siteHome(site.preferred) }).then(() => ok()),
   [CMD.FULLSCREEN]: (tab) => toggleFullscreen(tab),
   [CMD.ZOOM]: (tab, args) => zoomTab(tab, args),
+  [CMD.SITE_SWITCH]: (tab, args) => siteSwitch(tab, args),
+  [CMD.AUDIO_OUTPUTS]: () => audioOutputs(),
+  [CMD.AUDIO_OUTPUT_SET]: (tab, args) => audioOutputSet(tab, args),
+  [CMD.AUDIO_SETUP]: () => audioSetup(),
   [CMD.PING]: () => Promise.resolve(ok({ ts: Date.now() })),
 });
 
@@ -646,22 +806,34 @@ const executeCommand = async (msg, clientId) => {
 // ---------------------------------------------------------------------------
 // Video state forwarding (only the active tab is relevant to the phone)
 // ---------------------------------------------------------------------------
+/** Everything the phone shows about the TV tab besides the video itself (one shape for every push). */
+const pageContext = async (tab) => ({
+  title: (tab && tab.title) || '',
+  url: (tab && tab.url) || '',
+  ...(tab ? summariesOf(tab.id) : {}),
+  zoom: tab ? await zoomOf(tab.id) : 1,
+  // The TV window's full screen, so the music layout's button can say 全屏 / 退出全屏 (design 3.15.11).
+  fullscreen: tab ? (await chrome.windows.get(tab.windowId).catch(() => ({}))).state === 'fullscreen' : false,
+  site: siteStateOf(tab && tab.url),
+  audio: { label: audio.sink.id ? audio.sink.label : null, lost: audio.lost },
+  ts: Date.now(),
+});
+const pushState = async (tab, video) => sendToOffscreen({ type: 'state', state: { ...(video || { hasVideo: false }), ...(await pageContext(tab)) } });
+
 const forwardVideoState = async (state, sender) => {
   const tab = await getTargetTab();
   if (!tab || !sender.tab || sender.tab.id !== tab.id) return;
-  sendToOffscreen({ type: 'state', state: { ...state, title: tab.title || '', url: tab.url || '', ...summariesOf(tab.id), zoom: await zoomOf(tab.id), ts: Date.now() } });
-  // Library side effects never block or break state forwarding.
+  pushState(tab, state);
+  // Library / audio side effects never block or break state forwarding.
   lastVideoByTab.set(tab.id, state);
   recordRecent(tab, state).catch((e) => log.warn('library.recent_failed', { error: String(e) }));
   applyPendingSeek(tab, state).catch((e) => log.warn('library.resume_failed', { error: String(e) }));
   applyPendingFill(tab, state, sender.url).catch((e) => log.warn('fullscreen.fill_failed', { tab_id: tab.id, error: String(e) }));
+  syncAudioRoute(tab, state);
 };
 
 // Reset the phone's view when the user switches tab or navigates.
-const announceNoVideo = async () => {
-  const tab = await getTargetTab();
-  sendToOffscreen({ type: 'state', state: { hasVideo: false, title: tab ? tab.title : '', url: tab ? tab.url : '', zoom: tab ? await zoomOf(tab.id) : 1, ts: Date.now() } });
-};
+const announceNoVideo = async () => pushState(await getTargetTab(), null);
 
 /** The TV tab's zoom changed (from the phone or on the Chromebook): the phone shows the new value. */
 const onZoomChanged = async ({ tabId, oldZoomFactor, newZoomFactor }) => {
@@ -669,8 +841,7 @@ const onZoomChanged = async ({ tabId, oldZoomFactor, newZoomFactor }) => {
   const tab = await getTargetTab();
   log.debug('zoom.changed', { tab_id: tabId, from: oldZoomFactor, to: newZoomFactor, target: Boolean(tab && tab.id === tabId) });
   if (!tab || tab.id !== tabId) return;
-  const video = lastVideoByTab.get(tabId);
-  sendToOffscreen({ type: 'state', state: { ...(video || { hasVideo: false }), title: tab.title || '', url: tab.url || '', ...summariesOf(tabId), zoom: newZoomFactor, ts: Date.now() } });
+  pushState(tab, lastVideoByTab.get(tabId));
 };
 
 // ---------------------------------------------------------------------------
@@ -816,6 +987,18 @@ const BG_HANDLERS = Object.freeze({
     await sendToOffscreen({ type: 'reloadConfig' }); // phones re-authenticate and receive the new name
     return { ok: true };
   },
+  // Audio (design 3.15.10): the chosen device vanished (offscreen fell back to the default output).
+  audioLost: async ({ label }) => {
+    audio.lost = label || null;
+    log.warn('audio.sink_lost', { label });
+    const tab = await getTargetTab();
+    if (tab) await pushState(tab, lastVideoByTab.get(tab.id));
+    return true;
+  },
+  audioSetupDone: ({ ok: granted }) => {
+    log.info('audio.setup_done', { ok: Boolean(granted) });
+    return Promise.resolve(true);
+  },
   regenerateKey: async () => {
     await updateConfig({ key: newKey() });
     log.info('config.key_regenerated');
@@ -869,6 +1052,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 // Local writes also fire this; libraryLastWrite (set right after our own writes) tells them apart.
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'sync') return;
+  if (changes.sitePreferred) loadSitePreference().catch(() => {}); // another Chromebook switched site
   const keys = Object.keys(changes);
   const { libraryLastWrite = 0 } = await chrome.storage.local.get('libraryLastWrite');
   const { recent, bookmarks } = await readLibrary();
@@ -882,7 +1066,10 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 });
 chrome.tabs.onActivated.addListener(() => announceNoVideo());
 chrome.tabs.onZoomChange.addListener((info) => onZoomChanged(info).catch((e) => log.warn('zoom.push_failed', { error: String(e) })));
-chrome.tabs.onRemoved.addListener((tabId) => zoomByTab.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  zoomByTab.delete(tabId);
+  audioRouteAsked.delete(tabId);
+});
 chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.status === 'loading') {
     lastSummariesByTab.delete(tabId); // the new page's content script pushes its own summaries
@@ -891,5 +1078,11 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
   }
 });
 
-// Any wake-up of the worker re-checks the offscreen document (cheap, idempotent).
+// Any wake-up of the worker re-checks the offscreen document (cheap, idempotent) and reloads the cached
+// preferences (the worker may have been restarted since they were last read).
 ensureOffscreen();
+loadSitePreference().catch((e) => log.warn('site.preference_load_failed', { error: String(e) }));
+// The offscreen document may be newer than the worker (or recreated): give it the chosen output again.
+loadAudioSink()
+  .then((sink) => (sink.id ? toOffscreen({ type: 'sinkSet', id: sink.id, label: sink.label }) : null))
+  .catch((e) => log.warn('audio.sink_restore_failed', { error: String(e) }));

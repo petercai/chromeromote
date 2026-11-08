@@ -17,7 +17,7 @@
     <link rel="apple-touch-icon" href="icons/icon-180.png" />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icons/icon-192.png" type="image/png" />
-    <link rel="stylesheet" href="style.css?v=1.0.30" />
+    <link rel="stylesheet" href="style.css?v=1.0.31" />
   </head>
   <body>
     <!-- Top status bar: connection dot + WHICH Chromebook (tap to switch) -->
@@ -36,7 +36,20 @@
 
     <main>
       <!-- iyf.tv tab (was "浏览", iteration 25): touchpad + browser buttons for sites without a catalog of their own -->
-      <section id="tab-browse" class="tab active" aria-label="iyf.tv">
+      <section id="tab-browse" class="tab active" aria-label="kubb.tv">
+        <!-- Site dropdown (design 3.15, option S-A): kubb.tv / iyf.tv are one site on two domains -->
+        <div class="site-row">
+          <button id="siteBtn" class="site-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="siteMenu">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18"></path></svg>
+            <span id="siteName">kubb.tv</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          </button>
+          <span id="siteAddr" class="dim site-addr"></span>
+        </div>
+        <div id="siteMenu" class="site-menu" role="menu" aria-label="选择站点" hidden>
+          <div id="siteOptions"></div>
+          <p class="dim site-note">切换后电视停在同一部剧、同一集、同一时间。收藏和最近观看两个站点通用。</p>
+        </div>
         <div id="touchpad" class="touchpad" aria-label="触控板">
           <span class="touchpad-hint">单指滑动移动指针 · 轻点 = 点击 · 双指上下滑动 = 滚动</span>
         </div>
@@ -57,6 +70,22 @@
 
       <!-- Play tab: VLC-style transport + bookmark toggle -->
       <section id="tab-play" class="tab" aria-label="播放">
+        <!-- Top row: music "歌曲 / 视频" + TV full screen (music layout only), audio output (always; design 3.15) -->
+        <div class="play-top">
+          <div id="musicAv" class="av-toggle" role="group" aria-label="播放方式" hidden>
+            <button data-av="avSong" aria-pressed="true">歌曲</button>
+            <button data-av="avVideo" aria-pressed="false">视频</button>
+          </div>
+          <span class="play-top-gap"></span>
+          <button id="audioBtn" class="audio-pill" aria-haspopup="dialog" aria-label="声音输出:电视,点一下选择">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"></rect><circle cx="12" cy="14" r="3"></circle><circle cx="12" cy="6.5" r="1"></circle></svg>
+            <span id="audioName">电视</span>
+          </button>
+          <button id="musicFs" data-cmd="fullscreen" class="music-fs" hidden aria-label="电视全屏">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg>
+            <span id="musicFsText">全屏</span>
+          </button>
+        </div>
         <div class="title-row">
           <h2 id="title" class="title">没有正在播放的视频</h2>
           <button id="bookmarkBtn" class="bookmark-btn" aria-pressed="false" aria-label="收藏当前视频" disabled>☆</button>
@@ -117,9 +146,22 @@
           <h3 class="up-next-head">接下来播放</h3>
           <ul id="upNextList" class="yt-list"></ul>
         </section>
-        <section id="musicQueue" class="up-next" hidden aria-label="待播">
-          <h3 class="up-next-head">待播 · 点一首直接播放</h3>
-          <ul id="musicQueueList" class="yt-list"></ul>
+        <!-- YouTube Music tabs (design 3.15, option M-A): up next / lyrics / related -->
+        <section id="musicTabs" class="music-tabs" hidden aria-label="播放页内容">
+          <div class="music-tabbar" role="tablist">
+            <button role="tab" data-music-tab="queue" aria-selected="true" class="active">待播</button>
+            <button role="tab" data-music-tab="lyrics" aria-selected="false">歌词</button>
+            <button role="tab" data-music-tab="related" aria-selected="false">相关</button>
+          </div>
+          <div id="musicQueue" class="up-next music-tab-body">
+            <ul id="musicQueueList" class="yt-list"></ul>
+            <div id="musicLyrics" hidden>
+              <p id="musicLyricsText" class="lyrics"></p>
+              <p id="musicLyricsSource" class="dim small"></p>
+            </div>
+            <div id="musicRelated" hidden></div>
+            <p id="musicTabStatus" class="dim music-tab-status" hidden></p>
+          </div>
         </section>
       </section>
 
@@ -181,7 +223,7 @@
 
     <!-- Bottom tab bar -->
     <nav class="tabbar">
-      <button data-tab="browse" class="active">iyf.tv</button>
+      <button data-tab="browse" class="active" id="tabBrowseLabel">kubb.tv</button>
       <button data-tab="youtube">YouTube</button>
       <button data-tab="play">播放</button>
       <button data-tab="library">片单</button>
@@ -238,6 +280,19 @@
       </section>
     </div>
 
+    <!-- Audio output sheet (design 3.15.10): the Chromebook's outputs, e.g. a Bluetooth Nest Mini -->
+    <div id="audioSheet" class="sheet-backdrop" hidden>
+      <section class="sheet audio-sheet" role="dialog" aria-modal="true" aria-labelledby="audioTitle">
+        <h2 id="audioTitle">声音从哪里播放</h2>
+        <p class="dim">画面留在电视上，只换声音。对 kubb.tv / iyf.tv、YouTube、YouTube Music 都有效。</p>
+        <ul id="audioList" class="audio-list" role="radiogroup" aria-labelledby="audioTitle"></ul>
+        <p id="audioStatus" class="dim" hidden></p>
+        <button id="audioSetupBtn" class="wide sheet-item primary-action" hidden>在 Chromebook 上允许一次</button>
+        <p class="dim small">没看到 Nest？先在 Google Home 里打开它的蓝牙配对，再到 Chromebook 的“设置 › 蓝牙”里连接一次（步骤见说明）。</p>
+        <button id="audioClose" class="wide sheet-item">关闭</button>
+      </section>
+    </div>
+
     <!-- Not-paired / add-device help -->
     <div id="unpaired" class="overlay" hidden>
       <div>
@@ -278,12 +333,12 @@
     <!-- Toast (error = red, ok = green) -->
     <div id="toast" class="toast" hidden></div>
 
-    <script src="../extension/lib/version.js?v=1.0.30"></script>
-    <script src="../extension/vendor/peerjs.min.js?v=1.0.30"></script>
-    <script src="../extension/lib/protocol.js?v=1.0.30"></script>
-    <script src="../extension/lib/log.js?v=1.0.30"></script>
-    <script src="../extension/lib/youtube.js?v=1.0.30"></script>
-    <script src="../extension/lib/library.js?v=1.0.30"></script>
-    <script src="app.js?v=1.0.30"></script>
+    <script src="../extension/lib/version.js?v=1.0.31"></script>
+    <script src="../extension/vendor/peerjs.min.js?v=1.0.31"></script>
+    <script src="../extension/lib/protocol.js?v=1.0.31"></script>
+    <script src="../extension/lib/log.js?v=1.0.31"></script>
+    <script src="../extension/lib/youtube.js?v=1.0.31"></script>
+    <script src="../extension/lib/library.js?v=1.0.31"></script>
+    <script src="app.js?v=1.0.31"></script>
   </body>
 </html>

@@ -313,6 +313,32 @@
   /** "Up next" for the video playing now: the watch page's side list, without the video itself. */
   const upNextItems = (json, videoId) => parseItems(get(json, 'contents.twoColumnWatchNextResults.secondaryResults') || json).items.filter((c) => !(c.kind === 'video' && c.id === videoId));
 
+  // ---------------------------------------------------------------------------
+  // YouTube Music "歌词 / 相关" (design 3.15.11). The music `next` response names both tabs by a browse
+  // id (lyrics MPLYt…, related MPTRt…; measured 2026-11-08); a `browse` on that id returns the content.
+  // ---------------------------------------------------------------------------
+  const MUSIC_TAB_PREFIXES = Object.freeze({ lyrics: 'MPLY', related: 'MPTR' });
+  /** Browse ids of a song's lyrics / related tabs from its music `next` response (null when the tab is missing). */
+  const musicTabIds = (nextJson) => {
+    const idWith = (prefix) => findFirst(nextJson, (k, v) => (k === 'browseEndpoint' && isObj(v) && String(v.browseId || '').indexOf(prefix) === 0 ? v.browseId : undefined)) || null;
+    return { lyrics: idWith(MUSIC_TAB_PREFIXES.lyrics), related: idWith(MUSIC_TAB_PREFIXES.related) };
+  };
+
+  /** {text, source} of a lyrics browse response; null when the song has none (the page then shows a message). */
+  const parseLyrics = (json) => {
+    const shelf = findFirst(json, (k, v) => (k === 'musicDescriptionShelfRenderer' && isObj(v) ? v : undefined));
+    const text = shelf ? textOf(shelf.description).trim() : '';
+    return text ? Object.freeze({ text, source: textOf(shelf.footer).trim() || null }) : null;
+  };
+
+  /** Shelves of a related browse response: [{title, items: cards}] (songs, playlists, albums, artists). The artist bio shelf is left out. */
+  const parseRelated = (json) =>
+    (get(json, 'contents.sectionListRenderer.contents') || [])
+      .map((s) => s.musicCarouselShelfRenderer)
+      .filter(Boolean)
+      .map((shelf) => Object.freeze({ title: textOf(get(shelf, 'header.musicCarouselShelfBasicHeaderRenderer.title')) || null, items: parseItems(shelf.contents).items }))
+      .filter((s) => s.items.length > 0);
+
   /** Watch page on www, or on music.youtube.com (its player keeps the album / playlist / radio queue). */
   const watchUrl = ({ videoId, playlistId, music = false }) =>
     `${music ? MUSIC_ORIGIN : ORIGIN}/watch?v=${encodeURIComponent(videoId)}${playlistId ? `&list=${encodeURIComponent(playlistId)}` : ''}`;
@@ -344,6 +370,9 @@
     channelVideosParams,
     titleOf,
     upNextItems,
+    musicTabIds,
+    parseLyrics,
+    parseRelated,
     watchUrl,
     videoIdOf,
     isYoutubeUrl,

@@ -20,6 +20,11 @@
     HOME: 'home',
     FULLSCREEN: 'fullscreen',
     ZOOM: 'zoom', // page zoom of the TV's tab: {step: 1 | -1} or {reset: true} (design 3.14)
+    SITE_SWITCH: 'siteSwitch', // the same page on another mirror domain (kubb.tv / iyf.tv, design 3.15)
+    // Audio output of the TV's media (design 3.15.10): Chromebook outputs incl. a Bluetooth Nest
+    AUDIO_OUTPUTS: 'audioOutputs',
+    AUDIO_OUTPUT_SET: 'audioOutputSet',
+    AUDIO_SETUP: 'audioSetup', // opens the one-time permission page on the TV
     // Watch library (service worker, chrome.storage.local)
     LIBRARY_LIST: 'libraryList',
     BOOKMARK_ADD: 'bookmarkAdd',
@@ -49,6 +54,8 @@
     YT_UP_NEXT: 'ytUpNext',
     YT_OPEN: 'ytOpen',
     YT_WATCH_LATER: 'ytWatchLater',
+    MUSIC_LYRICS: 'musicLyrics', // lyrics / related of a YouTube Music song (design 3.15.11)
+    MUSIC_RELATED: 'musicRelated',
     // Diagnostics
     PING: 'ping',
   });
@@ -56,6 +63,7 @@
   const BROWSER_CMDS = Object.freeze([
     CMD.BACK, CMD.FORWARD, CMD.RELOAD, CMD.HOME, CMD.FULLSCREEN, CMD.ZOOM, CMD.PING,
     CMD.LIBRARY_LIST, CMD.BOOKMARK_ADD, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE, CMD.OPEN_ENTRY,
+    CMD.SITE_SWITCH, CMD.AUDIO_OUTPUTS, CMD.AUDIO_OUTPUT_SET, CMD.AUDIO_SETUP,
   ]);
   const PAGE_CMDS = Object.freeze([
     CMD.MOVE, CMD.CLICK, CMD.SCROLL, CMD.PAGE_UP, CMD.PAGE_DOWN,
@@ -63,10 +71,11 @@
     CMD.MUSIC_CONTROL, CMD.MUSIC_QUEUE_PLAY,
   ]);
   // musicControl actions (the YouTube Music player-bar buttons; selectors in lib/music.js).
-  const MUSIC_ACTIONS = Object.freeze(['previous', 'next', 'like', 'dislike', 'repeat', 'shuffle']);
+  // avSong / avVideo: the player's "歌曲 / 视频" switch (design 3.15.11).
+  const MUSIC_ACTIONS = Object.freeze(['previous', 'next', 'like', 'dislike', 'repeat', 'shuffle', 'avSong', 'avVideo']);
   const MUSIC_QUEUE_MAX = 1000;
   const VIDEO_CMDS = Object.freeze([CMD.PLAY_PAUSE, CMD.SEEK_BY, CMD.SEEK_TO, CMD.VOLUME]);
-  const YOUTUBE_CMDS = Object.freeze([CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_OPEN, CMD.YT_WATCH_LATER]);
+  const YOUTUBE_CMDS = Object.freeze([CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_OPEN, CMD.YT_WATCH_LATER, CMD.MUSIC_LYRICS, CMD.MUSIC_RELATED]);
 
   // Sections of the phone's YouTube tab (playlist / channel / musicList take an id). The music*
   // sections are the "音乐" source (design 3.13.15): read from music.youtube.com, not www.
@@ -91,8 +100,9 @@
   // YouTube reads run in a youtube.com data tab of their own: they never need (or touch) the TV's tab.
   const TAB_FREE_CMDS = Object.freeze([
     CMD.PING, CMD.LIBRARY_LIST, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE, CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_WATCH_LATER,
+    CMD.MUSIC_LYRICS, CMD.MUSIC_RELATED, CMD.AUDIO_OUTPUTS, CMD.AUDIO_OUTPUT_SET, CMD.AUDIO_SETUP,
   ]);
-  const TAB_LAUNCH_CMDS = Object.freeze([CMD.HOME, CMD.OPEN_ENTRY, CMD.YT_OPEN]);
+  const TAB_LAUNCH_CMDS = Object.freeze([CMD.HOME, CMD.OPEN_ENTRY, CMD.YT_OPEN, CMD.SITE_SWITCH]);
 
   // Stable error codes, surfaced in logs and on the phone's error toast.
   const ERR = Object.freeze({
@@ -113,6 +123,8 @@
     YT_FAILED: 'YT_FAILED', // YouTube request failed or its data was not understood (data.reason says why)
     NO_MUSIC: 'NO_MUSIC', // the page is not a YouTube Music player (or its controls were not found)
     NO_ZOOM: 'NO_ZOOM', // Chrome refused to zoom this page (chrome:// pages, the web store, …)
+    NO_AUDIO_SETUP: 'NO_AUDIO_SETUP', // output names unreadable: the one-time "Allow" on the Chromebook is missing
+    AUDIO_FAILED: 'AUDIO_FAILED', // routing the TV's audio to the chosen output failed (data.reason says why)
     PEER_UNAVAILABLE: 'PEER_UNAVAILABLE',
     TIMEOUT: 'TIMEOUT',
     INTERNAL: 'INTERNAL',
@@ -128,7 +140,58 @@
     STATE: 'state', // ext -> phone {state}
   });
 
-  const DEFAULT_HOME_URL = 'https://www.iyf.tv/';
+  // ---------------------------------------------------------------------------
+  // Mirror domains of one video site (design 3.15): the same app and paths on every domain
+  // (verified 2026-11-08: kubb.tv and iyf.tv serve identical /play/<id> pages). Library keys use the
+  // canonical host, which is iyf.tv because every key saved before 1.0.31 was on it: no migration.
+  // ---------------------------------------------------------------------------
+  const SITE_MIRRORS = Object.freeze([
+    Object.freeze({ id: 'kubb', host: 'www.kubb.tv', label: 'kubb.tv', note: '新域名' }),
+    Object.freeze({ id: 'iyf', host: 'www.iyf.tv', label: 'iyf.tv', note: '旧域名' }),
+  ]);
+  const SITE_CANONICAL_HOST = 'www.iyf.tv';
+  const DEFAULT_SITE = 'kubb';
+
+  const siteById = (id) => SITE_MIRRORS.find((s) => s.id === id) || null;
+  const bareDomain = (host) => host.replace(/^www./, '');
+  /** The mirror a hostname belongs to (its domain or any subdomain, e.g. m.kubb.tv); null otherwise. */
+  const mirrorOf = (hostname) => {
+    const h = String(hostname || '').toLowerCase();
+    return SITE_MIRRORS.find((s) => h === bareDomain(s.host) || h.endsWith(`.${bareDomain(s.host)}`)) || null;
+  };
+  const parseUrl = (url) => {
+    try {
+      return new URL(url);
+    } catch (_) {
+      return null;
+    }
+  };
+  /** Mirror of a page URL, or null (not a mirror page / unparsable). */
+  const mirrorOfUrl = (url) => {
+    const u = parseUrl(url);
+    return u ? mirrorOf(u.hostname) : null;
+  };
+  const withHost = (url, host) => {
+    const u = parseUrl(url);
+    if (!u || !mirrorOf(u.hostname)) return url; // not a mirror page: unchanged
+    u.hostname = host;
+    return u.toString();
+  };
+  /** The same page (path, query, hash) on another mirror; other URLs unchanged. */
+  const onSite = (url, siteId) => (siteById(siteId) ? withHost(url, siteById(siteId).host) : url);
+  /** One identity per page across mirrors (library keys). */
+  const canonicalUrl = (url) => withHost(url, SITE_CANONICAL_HOST);
+  const siteHome = (siteId) => `https://${(siteById(siteId) || siteById(DEFAULT_SITE)).host}/`;
+  const DEFAULT_HOME_URL = siteHome(DEFAULT_SITE);
+
+  /** Kind of an audio output from its (OS-given) name, for the phone's icon: bluetooth / hdmi / builtin / other. */
+  const audioKindOf = (label) => {
+    const l = String(label || '');
+    if (/bluetooth|蓝牙|nest|home mini/i.test(l)) return 'bluetooth';
+    if (/hdmi|display|monitor|tv\b|电视/i.test(l)) return 'hdmi';
+    if (/speaker|扬声器|internal|built-?in|headphone|耳机/i.test(l)) return 'builtin';
+    return 'other';
+  };
 
   const newId = () =>
     (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
@@ -208,6 +271,11 @@
     [CMD.MUSIC_CONTROL]: (a) => (MUSIC_ACTIONS.includes(a.action) ? null : ERR.BAD_MESSAGE),
     [CMD.MUSIC_QUEUE_PLAY]: (a) => (Number.isInteger(a.index) && a.index >= 0 && a.index < MUSIC_QUEUE_MAX ? null : ERR.BAD_MESSAGE),
     [CMD.YT_WATCH_LATER]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),
+    [CMD.MUSIC_LYRICS]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),
+    [CMD.MUSIC_RELATED]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),
+    [CMD.SITE_SWITCH]: (a) => (siteById(a.site) ? null : ERR.BAD_MESSAGE),
+    // '' = the default output; otherwise a device id the extension listed (opaque, bounded).
+    [CMD.AUDIO_OUTPUT_SET]: (a) => (typeof a.id === 'string' && a.id.length <= 256 ? null : ERR.BAD_MESSAGE),
     // At least one of videoId / playlistId (a playlist alone starts at its first video).
     [CMD.YT_OPEN]: (a) =>
       (a.videoId !== undefined || a.playlistId !== undefined) &&
@@ -354,6 +422,15 @@
     ERR,
     MSG,
     DEFAULT_HOME_URL,
+    SITE_MIRRORS,
+    DEFAULT_SITE,
+    siteById,
+    mirrorOf,
+    mirrorOfUrl,
+    onSite,
+    canonicalUrl,
+    siteHome,
+    audioKindOf,
     ICE_SERVERS,
     newId,
     newKey,
