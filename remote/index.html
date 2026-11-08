@@ -17,7 +17,7 @@
     <link rel="apple-touch-icon" href="icons/icon-180.png" />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icons/icon-192.png" type="image/png" />
-    <link rel="stylesheet" href="style.css?v=1.0.31" />
+    <link rel="stylesheet" href="style.css?v=1.0.32" />
   </head>
   <body>
     <!-- Top status bar: connection dot + WHICH Chromebook (tap to switch) -->
@@ -142,9 +142,18 @@
         </div>
         <button id="fullscreen" data-cmd="fullscreen" class="wide" aria-label="全屏">⛶ 全屏</button>
         <!-- YouTube: what plays after this video (design 3.13.9); shown only for a YouTube video -->
-        <section id="upNext" class="up-next" hidden aria-label="接下来播放">
-          <h3 class="up-next-head">接下来播放</h3>
-          <ul id="upNextList" class="yt-list"></ul>
+        <!-- YouTube video: 待播 (playlist / autoplay) and 相关 (side list) tabs, like the music tabs (design 3.15.13) -->
+        <section id="upNext" class="music-tabs" hidden aria-label="接下来播放">
+          <div class="music-tabbar two" role="tablist">
+            <button role="tab" data-yt-tab="queue" class="active" aria-selected="true">待播</button>
+            <button role="tab" data-yt-tab="related" aria-selected="false">相关</button>
+          </div>
+          <div id="upNextBody" class="up-next music-tab-body">
+            <p id="upNextQueueHead" class="up-next-head" hidden></p>
+            <ul id="upNextQueue" class="yt-list"></ul>
+            <ul id="upNextList" class="yt-list" hidden></ul>
+            <p id="upNextStatus" class="dim music-tab-status" hidden></p>
+          </div>
         </section>
         <!-- YouTube Music tabs (design 3.15, option M-A): up next / lyrics / related -->
         <section id="musicTabs" class="music-tabs" hidden aria-label="播放页内容">
@@ -333,12 +342,12 @@
     <!-- Toast (error = red, ok = green) -->
     <div id="toast" class="toast" hidden></div>
 
-    <script src="../extension/lib/version.js?v=1.0.31"></script>
-    <script src="../extension/vendor/peerjs.min.js?v=1.0.31"></script>
-    <script src="../extension/lib/protocol.js?v=1.0.31"></script>
-    <script src="../extension/lib/log.js?v=1.0.31"></script>
-    <script src="../extension/lib/youtube.js?v=1.0.31"></script>
-    <script src="../extension/lib/library.js?v=1.0.31"></script>
-    <script src="app.js?v=1.0.31"></script>
+    <script src="../extension/lib/version.js?v=1.0.32"></script>
+    <script src="../extension/vendor/peerjs.min.js?v=1.0.32"></script>
+    <script src="../extension/lib/protocol.js?v=1.0.32"></script>
+    <script src="../extension/lib/log.js?v=1.0.32"></script>
+    <script src="../extension/lib/youtube.js?v=1.0.32"></script>
+    <script src="../extension/lib/library.js?v=1.0.32"></script>
+    <script src="app.js?v=1.0.32"></script>
   </body>
 </html>

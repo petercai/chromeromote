@@ -618,12 +618,15 @@ const ytBrowse = async (args) => {
   return ok({ title: CRYt.titleOf(res.data), items, cursor: next });
 };
 
-const ytUpNext = async ({ videoId }) => {
-  const res = await ytRequest('next', { videoId }, 'upNext');
+/** ytUpNext: "待播" (the playlist, or the autoplay video) + "相关" (side list) for the TV's video (design 3.15.13). */
+const ytUpNext = async ({ videoId, playlistId }) => {
+  const res = await ytRequest('next', { videoId, ...(playlistId ? { playlistId } : {}) }, 'upNext');
   if (!res.ok) return res;
-  const items = CRYt.upNextItems(res.data, videoId).slice(0, YT_UP_NEXT_MAX);
-  log.info('yt.parsed', { section: 'upNext', items: items.length });
-  return ok({ items });
+  const { queue, related } = CRYt.watchNext(res.data, videoId);
+  const items = related.slice(0, YT_UP_NEXT_MAX);
+  log.info('yt.parsed', { section: 'upNext', items: items.length, queue: queue ? queue.items.length : 0, autoplay: Boolean(queue && queue.autoplay), playlist_id: playlistId || null, current: queue ? queue.current : null });
+  // `items` keeps its meaning (the side list) for phones older than 1.0.32.
+  return ok({ items, queue });
 };
 
 /**

@@ -267,7 +267,8 @@
         ? null
         : ERR.BAD_MESSAGE,
     [CMD.ZOOM]: (a) => ((a.step === 1 || a.step === -1) !== (a.reset === true) ? null : ERR.BAD_MESSAGE),
-    [CMD.YT_UP_NEXT]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),
+    // playlistId (optional): the TV's &list=, so "待播" can show that playlist (design 3.15.13).
+    [CMD.YT_UP_NEXT]: (a) => (isVideoId(a.videoId) && (a.playlistId === undefined || isYtListId(a.playlistId)) ? null : ERR.BAD_MESSAGE),
     [CMD.MUSIC_CONTROL]: (a) => (MUSIC_ACTIONS.includes(a.action) ? null : ERR.BAD_MESSAGE),
     [CMD.MUSIC_QUEUE_PLAY]: (a) => (Number.isInteger(a.index) && a.index >= 0 && a.index < MUSIC_QUEUE_MAX ? null : ERR.BAD_MESSAGE),
     [CMD.YT_WATCH_LATER]: (a) => (isVideoId(a.videoId) ? null : ERR.BAD_MESSAGE),

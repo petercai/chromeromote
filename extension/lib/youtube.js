@@ -313,6 +313,32 @@
   /** "Up next" for the video playing now: the watch page's side list, without the video itself. */
   const upNextItems = (json, videoId) => parseItems(get(json, 'contents.twoColumnWatchNextResults.secondaryResults') || json).items.filter((c) => !(c.kind === 'video' && c.id === videoId));
 
+  /**
+   * The Play tab's "待播 / 相关" for a YouTube video (design 3.15.13; shapes measured 2026-11-08).
+   * queue: in a playlist (&list=) its rows, the current one flagged, each carrying the list id so a tap
+   *        keeps playing inside it; otherwise the autoplay video (moved out of related). null when neither.
+   * related: the watch page's side list.
+   */
+  const watchNext = (json, videoId) => {
+    const related = upNextItems(json, videoId);
+    const panel = get(json, 'contents.twoColumnWatchNextResults.playlist.playlist');
+    if (panel && Array.isArray(panel.contents)) {
+      const items = panel.contents
+        .map((row) => row.playlistPanelVideoRenderer)
+        .filter((row) => row && row.videoId)
+        .map((row) => ({ row, c: fromLegacyVideo(row) }))
+        .filter(({ c }) => c) // a row without a title (e.g. a removed video) is skipped
+        .map(({ row, c }) => Object.freeze({ ...c, playlistId: panel.playlistId || null, current: Boolean(row.selected) || row.videoId === videoId }));
+      const current = items.findIndex((c) => c.current);
+      return { queue: Object.freeze({ title: textOf(panel.title) || null, playlistId: panel.playlistId || null, current, items, autoplay: false }), related };
+    }
+    const autoId = get(json, 'contents.twoColumnWatchNextResults.autoplay.autoplay.sets.0.autoplayVideo.watchEndpoint.videoId');
+    const auto = related.find((c) => c.kind === 'video' && c.id === autoId) || null;
+    return auto
+      ? { queue: Object.freeze({ title: null, playlistId: null, current: -1, items: [auto], autoplay: true }), related: related.filter((c) => c !== auto) }
+      : { queue: null, related };
+  };
+
   // ---------------------------------------------------------------------------
   // YouTube Music "歌词 / 相关" (design 3.15.11). The music `next` response names both tabs by a browse
   // id (lyrics MPLYt…, related MPTRt…; measured 2026-11-08); a `browse` on that id returns the content.
@@ -370,6 +396,7 @@
     channelVideosParams,
     titleOf,
     upNextItems,
+    watchNext,
     musicTabIds,
     parseLyrics,
     parseRelated,

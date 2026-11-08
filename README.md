@@ -218,7 +218,10 @@ Browse YouTube on the phone and play on the TV, without the pointer. Chrome on t
 - Tap a playlist to see its videos on the phone; **▶ 全部播放** (Play all) plays it from the start.
 - **Long press** a video: **加入稍后观看** (Save to Watch later) or **打开频道** (Go to channel, which lists the
   channel's videos on the phone).
-- While the TV plays a YouTube video, the **播放** (Play) tab lists **接下来播放** (Up next).
+- While the TV plays a YouTube video, the **播放** (Play) tab has two tabs (1.0.32), like YouTube Music:
+  **待播** (Up next) = what YouTube plays next: in a playlist its videos ("list name · 第 3 / 25", the playing one
+  highlighted; tap one to play it inside the list), otherwise the autoplay video ("自动播放下一个");
+  **相关** (Related) = the watch page's related videos. Long press a video for Watch later / channel.
 - When the TV is on YouTube, the phone opens on the YouTube tab.
 - The first time, the extension opens youtube.com in a **background tab** to read the lists; leave it open
   (it is reused). Shorts are not shown.

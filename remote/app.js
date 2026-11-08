@@ -190,7 +190,9 @@
     ytSeq: 0, // request generation: replies for a view that is no longer shown are dropped
     ytMenu: null, // card whose long-press menu is open
     ytAutoSwitched: false, // the TV-on-YouTube auto switch happens once per connection (Q41)
-    upNext: { videoId: null, items: [] },
+    // Play tab for a YouTube video (design 3.15.13): key = video + list; items = 相关, queue = 待播
+    upNext: { key: null, items: [], queue: null, loading: false },
+    ytTab: 'queue', // '待播' (queue) | '相关' (related)
     zoom: 1, // the TV tab's page zoom, pushed with the state (design 3.14)
     zoomBusy: false, // one zoom command at a time: each step starts from the factor the last one set
     music: null, // YouTube Music now-playing summary pushed with the video state (design 3.13.14)
@@ -969,6 +971,7 @@
   /** Tap a card: a video plays on the TV (inside a playlist: continuing through it); a playlist opens on the phone. */
   // A music song keeps playing through its own list (album, playlist, liked songs or radio).
   const openYtCard = async (c, view) => {
+    if (c.current) return; // the row playing now (待播)
     const music = isMusicView(view);
     // From the Play tab's "相关" (design 3.15.11): a playlist / album / artist opens in the YouTube tab's music source.
     if (c.kind === 'playlist' && view && view.related) {
@@ -1080,7 +1083,7 @@
       if (res.ok) toast(b.dataset.av === 'avVideo' ? '电视上切到 MV 视频' : '电视上切到只放歌曲', 'ok');
     })
   );
-  document.querySelectorAll('.music-tabbar button').forEach((b) => b.addEventListener('click', () => setMusicTab(b.dataset.musicTab)));
+  document.querySelectorAll('[data-music-tab]').forEach((b) => b.addEventListener('click', () => setMusicTab(b.dataset.musicTab)));
   $('siteBtn').addEventListener('click', () => toggleSiteMenu());
   // A tap anywhere else closes the site menu.
   document.addEventListener('click', (e) => {
@@ -1133,11 +1136,68 @@
     $('ytMenu').hidden = true;
   };
 
-  // Play tab "Up next": refreshed when the TV's YouTube video changes, never on every state push.
+  // Play tab "待播 / 相关" for a YouTube video (design 3.15.13): fetched when the TV's video or list
+  // changes, never on every state push. 待播 rows carry their list id, so a tap plays inside the list.
+  const queueView = (queue) => (queue && queue.playlistId ? { section: YT_SECTION.PLAYLIST, id: queue.playlistId } : null);
+  const queueCard = (c, view) => {
+    const li = ytCard(c, view);
+    if (c.current) {
+      li.firstChild.classList.add('current');
+      li.firstChild.setAttribute('aria-current', 'true');
+    }
+    return li;
+  };
+  const queueHeadText = (q) => {
+    if (q.autoplay) return '自动播放下一个';
+    const pos = q.current >= 0 ? ` · 第 ${q.current + 1} / ${q.items.length}` : '';
+    return `${q.title || '播放列表'}${pos}`;
+  };
+
   const renderUpNext = () => {
-    const items = app.status === 'connected' && CRYt.videoIdOf(app.url) ? app.upNext.items : [];
-    $('upNext').hidden = items.length === 0;
+    const on = app.status === 'connected' && !CRYt.isMusicUrl(app.url) && Boolean(CRYt.videoIdOf(app.url));
+    const { items, queue, loading } = app.upNext;
+    $('upNext').hidden = !on || (!loading && !items.length && !queue);
+    if ($('upNext').hidden) return;
+    const tab = app.ytTab;
+    document.querySelectorAll('[data-yt-tab]').forEach((b) => {
+      const active = b.dataset.ytTab === tab;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', String(active));
+    });
+    const shown = tab === 'queue' ? (queue ? queue.items : []) : items;
+    const status = loading && !shown.length ? '正在读取…' : !shown.length ? (tab === 'queue' ? '没有待播(YouTube 会推荐下一个)' : '没有相关视频') : '';
+    $('upNextStatus').hidden = !status;
+    $('upNextStatus').textContent = status;
+    $('upNextQueueHead').hidden = tab !== 'queue' || !queue;
+    if (queue) $('upNextQueueHead').textContent = queueHeadText(queue);
+    $('upNextQueue').hidden = tab !== 'queue';
+    $('upNextList').hidden = tab !== 'related';
+    setChildren($('upNextQueue'), queue ? queue.items.map((c) => queueCard(c, queueView(queue))) : []);
     setChildren($('upNextList'), items.map((c) => ytCard(c, null)));
+    // Keep the playing row in view (one row of context above it).
+    const cur = tab === 'queue' && $('upNextQueue').querySelector('.yt-card.current');
+    if (cur) $('upNextBody').scrollTop = Math.max(0, cur.offsetTop - $('upNextBody').offsetTop - 60);
+  };
+
+  const setYtTab = (tab) => {
+    if (tab === app.ytTab) return;
+    log.info('ui.yt_tab', { tab });
+    app.ytTab = tab;
+    $('upNextBody').scrollTop = 0;
+    renderUpNext();
+  };
+
+  /** The TV's YouTube video and list (&list=), or null on other pages and on YouTube Music. */
+  const tvWatch = () => {
+    const videoId = CRYt.isMusicUrl(app.url) ? null : CRYt.videoIdOf(app.url);
+    if (!videoId) return null;
+    let playlistId = null;
+    try {
+      playlistId = new URL(app.url).searchParams.get('list');
+    } catch (_) {
+      playlistId = null;
+    }
+    return { videoId, playlistId, key: `${videoId}|${playlistId || ''}` };
   };
 
   const ytOnState = () => {
@@ -1151,18 +1211,26 @@
         switchTab(autoTab);
       }
     }
-    // "Up next" is YouTube's; YouTube Music shows its own queue instead.
-    const videoId = CRYt.isMusicUrl(app.url) ? null : CRYt.videoIdOf(app.url);
-    if (videoId === app.upNext.videoId) return;
-    app.upNext = { videoId, items: [] };
+    // "待播 / 相关" are YouTube's; YouTube Music shows its own tabs instead.
+    const watch = tvWatch();
+    const key = watch ? watch.key : null;
+    if (key === app.upNext.key) return;
+    // Same list, next video: keep the old rows on screen until the new ones arrive (no flicker).
+    app.upNext = { ...app.upNext, key, loading: Boolean(watch) };
+    if (!watch) app.upNext = { key, items: [], queue: null, loading: false };
     renderUpNext();
-    if (!videoId) return;
-    send(CMD.YT_UP_NEXT, { videoId }).then((res) => {
-      if (app.upNext.videoId !== videoId) return; // the TV moved on meanwhile
-      if (res.ok) app.upNext = { videoId, items: res.data.items };
+    if (!watch) return;
+    const { videoId, playlistId } = watch;
+    send(CMD.YT_UP_NEXT, { videoId, ...(playlistId ? { playlistId } : {}) }).then((res) => {
+      if (app.upNext.key !== key) return; // the TV moved on meanwhile
+      app.upNext = res.ok
+        ? { key, items: res.data.items || [], queue: res.data.queue || null, loading: false }
+        : { key, items: [], queue: null, loading: false };
+      log.info('ui.yt_up_next', { video_id: videoId, playlist_id: playlistId, ok: res.ok, queue: app.upNext.queue ? app.upNext.queue.items.length : 0, related: app.upNext.items.length });
       renderUpNext();
     });
   };
+  document.querySelectorAll('[data-yt-tab]').forEach((b) => b.addEventListener('click', () => setYtTab(b.dataset.ytTab)));
 
   // -------------------------------------------------------------------------
   // YouTube Music on the Play tab (design 3.13.14): the TV's player, read by the extension
@@ -1284,7 +1352,7 @@
 
   const renderMusicTab = (m) => {
     const tab = app.musicTab;
-    document.querySelectorAll('.music-tabbar button').forEach((b) => {
+    document.querySelectorAll('[data-music-tab]').forEach((b) => {
       const on = b.dataset.musicTab === tab;
       b.classList.toggle('active', on);
       b.setAttribute('aria-selected', String(on));
@@ -1555,7 +1623,7 @@
     app.url = '';
     app.yt = []; // another Chromebook may be signed in to another YouTube account
     app.ytStacks = {};
-    app.upNext = { videoId: null, items: [] };
+    app.upNext = { key: null, items: [], queue: null, loading: false };
     renderYt();
     renderUpNext();
     app.retryMs = RETRY_MIN_MS;

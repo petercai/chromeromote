@@ -394,3 +394,8 @@ button.danger { background: var(--danger); color: #fff; font-weight: 600; }
 .music-art { border-radius: 10px; }
 .music-panel .music-meta { flex: 1; min-width: 0; align-self: center; }
 .no-flex-gap .music-panel > * + * { margin-top: 0; margin-left: 14px; }
+/* 1.0.32: YouTube "待播 / 相关" (design 3.15.13) reuses the music tab bar with two tabs. */
+.music-tabbar.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#upNext.music-tabs[hidden], #upNextQueue[hidden], #upNextList[hidden], #upNextQueueHead[hidden], #upNextStatus[hidden] { display: none; }
+.yt-card.current { background: #2a1f14; }
+.yt-card.current .t { color: var(--accent); }
