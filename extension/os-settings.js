@@ -13,6 +13,7 @@
  * Loaded by background.js with importScripts; uses its `log` and `sleep`.
  */
 
+// <all_urls> never covers chrome://: manifest.json names chrome://os-settings/* explicitly (self-test 1.0.33).
 const OS_SETTINGS_ORIGIN = 'chrome://os-settings/';
 const OS_SETTINGS_PAGES = Object.freeze({ bluetooth: 'bluetoothDevices', audio: 'audio' });
 const OS_SETTINGS_LOAD_MS = 3000; // the settings app renders its subpage asynchronously
@@ -155,9 +156,12 @@ const probeSettingsPage = async (page) => {
   };
   const before = new Set((await settingsTabs()).map((t) => t.id));
 
+  // A fullscreen TV window refuses tabs.create ("locked fullscreen"); a separate unfocused window does not.
+  let openedWindowId = null;
   try {
-    const tab = await chrome.tabs.create({ url, active: false });
-    step('open', true, { tab_id: tab.id });
+    const win = await chrome.windows.create({ url, focused: false });
+    openedWindowId = win.id;
+    step('open', true, { window_id: win.id, via: 'window' });
   } catch (e) {
     step('open', false, errText(e));
   }
@@ -194,6 +198,8 @@ const probeSettingsPage = async (page) => {
   // Close only the settings tabs this probe opened; a settings window the user had open stays.
   const opened = (await settingsTabs()).filter((t) => !before.has(t.id)).map((t) => t.id);
   if (opened.length) await chrome.tabs.remove(opened).catch((e) => step('close', false, errText(e)));
+  // ChromeOS may move the page into the settings app and leave our window behind: close it too.
+  if (openedWindowId !== null) await chrome.windows.remove(openedWindowId).catch(() => {});
 
   const text = JSON.stringify(result);
   log.info('sys.probe.page_result', { page, via, result: text ? text.slice(0, PROBE_TEXT_MAX) : null, truncated: Boolean(text && text.length > PROBE_TEXT_MAX) });
