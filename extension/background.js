@@ -12,7 +12,7 @@
  * Message routing convention: every runtime message carries `target` ('bg' | 'offscreen')
  * or comes from a content script with `type` 'videoState'.
  */
-importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js', 'lib/library.js', 'lib/youtube.js', 'os-settings.js');
+importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js', 'lib/library.js', 'lib/youtube.js', 'lib/outputs.js', 'os-settings.js');
 
 const { CMD, ERR, TAB_NEED, ok, fail, executorOf, tabNeedOf, buildPairUrl, newKey } = CR;
 
@@ -438,7 +438,8 @@ const siteSwitch = async (tab, { site: to }) => {
 const AUDIO_ROUTE_RETRY_MS = 5000;
 // cache of 'audioSink' + the last lost device; loaded = the cache was read (a restarted worker must not
 // stop a running route because its cache still says "default").
-const audio = { sink: { id: '', label: null }, lost: null, loaded: false };
+// system = the ChromeOS output last read from the settings page (design 3.16.5), {label, kind}.
+const audio = { sink: { id: '', label: null }, lost: null, loaded: false, system: { label: null, kind: null } };
 const audioRouteAsked = new Map(); // tabId -> ts of the last route request (no request storm while it starts)
 
 const loadAudioSink = async () => {
@@ -503,6 +504,46 @@ const audioOutputSet = async (tab, { id }) => {
   const target = tab || (await getTargetTab());
   if (target) await requestAudioRoute(target, Boolean(id), 'phone');
   return ok({ label });
+};
+
+// ---------------------------------------------------------------------------
+// System-wide sound output via the ChromeOS settings page (design 3.16.5, O-A; os-settings.js).
+// ---------------------------------------------------------------------------
+/** Map a driver error to the phone's reply; anything untyped is an internal failure. */
+const outputFail = (e, cmd) => {
+  log.warn('output.failed', { cmd, code: e.code || ERR.INTERNAL, step: e.step, reason: e.reason || String(e && e.message) });
+  return fail(e.code || ERR.INTERNAL, { step: e.step, reason: e.reason || String(e && e.message) });
+};
+
+/** Remember the active output and push it, so the phone's pill follows changes made anywhere. */
+const applySystemOutput = async (rows) => {
+  audio.system = CROut.audioStateOf(rows);
+  audio.lost = null;
+  const tab = await getTargetTab();
+  if (tab) await pushState(tab, lastVideoByTab.get(tab.id));
+};
+
+const outputsGet = async () => {
+  try {
+    const rows = await osOutputsRead();
+    await applySystemOutput(rows);
+    return ok({ outputs: CROut.publicOutputs(rows) });
+  } catch (e) {
+    return outputFail(e, CMD.OUTPUTS_GET);
+  }
+};
+
+const outputSet = async (tab, { id }) => {
+  try {
+    // The 3.15 tab routing must not stack on top of the system output (removed in T229).
+    if (audio.sink.id) await audioOutputSet(tab, { id: '' });
+    const { rows, steps } = await osOutputSwitch(id);
+    await applySystemOutput(rows);
+    const active = CROut.activeOf(rows);
+    return ok({ outputs: CROut.publicOutputs(rows), active: active ? active.id : null, steps: steps.map((s) => s.op) });
+  } catch (e) {
+    return outputFail(e, CMD.OUTPUT_SET);
+  }
 };
 
 const audioSetup = async () => {
@@ -755,6 +796,8 @@ const BROWSER_ACTIONS = Object.freeze({
   [CMD.AUDIO_OUTPUTS]: () => audioOutputs(),
   [CMD.AUDIO_OUTPUT_SET]: (tab, args) => audioOutputSet(tab, args),
   [CMD.AUDIO_SETUP]: () => audioSetup(),
+  [CMD.OUTPUTS_GET]: () => outputsGet(),
+  [CMD.OUTPUT_SET]: (tab, args) => outputSet(tab, args),
   [CMD.PING]: () => Promise.resolve(ok({ ts: Date.now() })),
 });
 
@@ -818,7 +861,8 @@ const pageContext = async (tab) => ({
   // The TV window's full screen, so the music layout's button can say 全屏 / 退出全屏 (design 3.15.11).
   fullscreen: tab ? (await chrome.windows.get(tab.windowId).catch(() => ({}))).state === 'fullscreen' : false,
   site: siteStateOf(tab && tab.url),
-  audio: { label: audio.sink.id ? audio.sink.label : null, lost: audio.lost },
+  // The 3.15 tab route wins while it is on; otherwise the system output (design 3.16.5).
+  audio: audio.sink.id ? { label: audio.sink.label, kind: 'bluetooth', lost: audio.lost } : { ...audio.system, lost: audio.lost },
   ts: Date.now(),
 });
 const pushState = async (tab, video) => sendToOffscreen({ type: 'state', state: { ...(video || { hasVideo: false }), ...(await pageContext(tab)) } });

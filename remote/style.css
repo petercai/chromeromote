@@ -386,7 +386,18 @@ button.danger { background: var(--danger); color: #fff; font-weight: 600; }
 .audio-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .primary-action { background: var(--accent); color: #000; font-weight: 700; }
 .primary-action[hidden] { display: none; }
-#audioStatus[hidden] { display: none; }
+#audioStatus[hidden], #audioSetupHelp[hidden] { display: none; }
+/* 1.0.35: design 3.16.5 (O-A) — groups, connecting / failed rows, not-set-up help */
+.audio-group { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.audio-row:disabled { opacity: 0.45; }
+.audio-row.busy { background: #2a1f14; box-shadow: inset 0 0 0 1px var(--accent); opacity: 1; }
+.audio-row.err { box-shadow: inset 0 0 0 1px var(--danger); }
+.audio-row.err .s { color: #ff8a8d; }
+.audio-spin { width: 22px; height: 22px; flex: none; border-radius: 50%; border: 2.5px solid var(--accent); border-right-color: transparent; animation: audio-spin 0.9s linear infinite; }
+@keyframes audio-spin { to { transform: rotate(360deg); } }
+.audio-help { background: var(--bg); border-radius: var(--radius); padding: 12px 14px; font-size: 14px; }
+.audio-help ol { margin: 8px 0 0; padding-left: 20px; line-height: 1.6; }
+.audio-help .accent { color: var(--accent); word-break: break-all; }
 .no-flex-gap .site-row > * + *, .no-flex-gap .play-top > * + *, .no-flex-gap .site-option > * + *, .no-flex-gap .audio-row > * + * { margin-left: 8px; }
 /* M-A: art beside the title (mockup "M-A 内嵌标签") so the 待播 / 歌词 / 相关 area keeps most of the screen. */
 .music-panel { flex-direction: row; align-items: center; gap: 14px; }

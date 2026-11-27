@@ -17,7 +17,7 @@
     <link rel="apple-touch-icon" href="icons/icon-180.png" />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icons/icon-192.png" type="image/png" />
-    <link rel="stylesheet" href="style.css?v=1.0.34" />
+    <link rel="stylesheet" href="style.css?v=1.0.35" />
   </head>
   <body>
     <!-- Top status bar: connection dot + WHICH Chromebook (tap to switch) -->
@@ -289,15 +289,25 @@
       </section>
     </div>
 
-    <!-- Audio output sheet (design 3.15.10): the Chromebook's outputs, e.g. a Bluetooth Nest Mini -->
+    <!-- Sound output sheet (design 3.16.5, option O-A): system output via the ChromeOS settings page,
+         wired outputs + every paired Bluetooth audio device; a tap connects and switches -->
     <div id="audioSheet" class="sheet-backdrop" hidden>
       <section class="sheet audio-sheet" role="dialog" aria-modal="true" aria-labelledby="audioTitle">
         <h2 id="audioTitle">声音从哪里播放</h2>
-        <p class="dim">画面留在电视上，只换声音。对 kubb.tv / iyf.tv、YouTube、YouTube Music 都有效。</p>
-        <ul id="audioList" class="audio-list" role="radiogroup" aria-labelledby="audioTitle"></ul>
+        <p class="dim">画面留在电视上，Chromebook 的所有声音都跟着换。</p>
+        <ul id="audioList" class="audio-list" aria-labelledby="audioTitle"></ul>
         <p id="audioStatus" class="dim" hidden></p>
-        <button id="audioSetupBtn" class="wide sheet-item primary-action" hidden>在 Chromebook 上允许一次</button>
-        <p class="dim small">没看到 Nest？先在 Google Home 里打开它的蓝牙配对，再到 Chromebook 的“设置 › 蓝牙”里连接一次（步骤见说明）。</p>
+        <!-- NO_SETTINGS_ACCESS: the flag that lets the extension use chrome://os-settings is off -->
+        <div id="audioSetupHelp" class="audio-help" hidden>
+          <b>需要在 Chromebook 上打开一个设置</b>
+          <ol>
+            <li>在电视的 Chrome 地址栏打开 <span class="accent">chrome://flags#extensions-on-chrome-urls</span></li>
+            <li>选 Enabled，点 Restart</li>
+            <li>回到这里点“再试一次”</li>
+          </ol>
+        </div>
+        <button id="audioRetryBtn" class="wide sheet-item primary-action" hidden>再试一次</button>
+        <p class="dim small">没看到设备？先在 Chromebook 的“设置 › 蓝牙”里配对一次。</p>
         <button id="audioClose" class="wide sheet-item">关闭</button>
       </section>
     </div>
@@ -342,12 +352,12 @@
     <!-- Toast (error = red, ok = green) -->
     <div id="toast" class="toast" hidden></div>
 
-    <script src="../extension/lib/version.js?v=1.0.34"></script>
-    <script src="../extension/vendor/peerjs.min.js?v=1.0.34"></script>
-    <script src="../extension/lib/protocol.js?v=1.0.34"></script>
-    <script src="../extension/lib/log.js?v=1.0.34"></script>
-    <script src="../extension/lib/youtube.js?v=1.0.34"></script>
-    <script src="../extension/lib/library.js?v=1.0.34"></script>
-    <script src="app.js?v=1.0.34"></script>
+    <script src="../extension/lib/version.js?v=1.0.35"></script>
+    <script src="../extension/vendor/peerjs.min.js?v=1.0.35"></script>
+    <script src="../extension/lib/protocol.js?v=1.0.35"></script>
+    <script src="../extension/lib/log.js?v=1.0.35"></script>
+    <script src="../extension/lib/youtube.js?v=1.0.35"></script>
+    <script src="../extension/lib/library.js?v=1.0.35"></script>
+    <script src="app.js?v=1.0.35"></script>
   </body>
 </html>

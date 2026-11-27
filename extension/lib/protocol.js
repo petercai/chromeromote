@@ -25,6 +25,10 @@
     AUDIO_OUTPUTS: 'audioOutputs',
     AUDIO_OUTPUT_SET: 'audioOutputSet',
     AUDIO_SETUP: 'audioSetup', // opens the one-time permission page on the TV
+    // System-wide sound output through the ChromeOS settings page (design 3.16.5, O-A): connects
+    // Bluetooth devices too. Replaces the three audio* commands above once verified (T229).
+    OUTPUTS_GET: 'outputsGet',
+    OUTPUT_SET: 'outputSet',
     // Watch library (service worker, chrome.storage.local)
     LIBRARY_LIST: 'libraryList',
     BOOKMARK_ADD: 'bookmarkAdd',
@@ -63,7 +67,7 @@
   const BROWSER_CMDS = Object.freeze([
     CMD.BACK, CMD.FORWARD, CMD.RELOAD, CMD.HOME, CMD.FULLSCREEN, CMD.ZOOM, CMD.PING,
     CMD.LIBRARY_LIST, CMD.BOOKMARK_ADD, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE, CMD.OPEN_ENTRY,
-    CMD.SITE_SWITCH, CMD.AUDIO_OUTPUTS, CMD.AUDIO_OUTPUT_SET, CMD.AUDIO_SETUP,
+    CMD.SITE_SWITCH, CMD.AUDIO_OUTPUTS, CMD.AUDIO_OUTPUT_SET, CMD.AUDIO_SETUP, CMD.OUTPUTS_GET, CMD.OUTPUT_SET,
   ]);
   const PAGE_CMDS = Object.freeze([
     CMD.MOVE, CMD.CLICK, CMD.SCROLL, CMD.PAGE_UP, CMD.PAGE_DOWN,
@@ -100,7 +104,7 @@
   // YouTube reads run in a youtube.com data tab of their own: they never need (or touch) the TV's tab.
   const TAB_FREE_CMDS = Object.freeze([
     CMD.PING, CMD.LIBRARY_LIST, CMD.BOOKMARK_REMOVE, CMD.RECENT_REMOVE, CMD.YT_BROWSE, CMD.YT_UP_NEXT, CMD.YT_WATCH_LATER,
-    CMD.MUSIC_LYRICS, CMD.MUSIC_RELATED, CMD.AUDIO_OUTPUTS, CMD.AUDIO_OUTPUT_SET, CMD.AUDIO_SETUP,
+    CMD.MUSIC_LYRICS, CMD.MUSIC_RELATED, CMD.AUDIO_OUTPUTS, CMD.AUDIO_OUTPUT_SET, CMD.AUDIO_SETUP, CMD.OUTPUTS_GET, CMD.OUTPUT_SET,
   ]);
   const TAB_LAUNCH_CMDS = Object.freeze([CMD.HOME, CMD.OPEN_ENTRY, CMD.YT_OPEN, CMD.SITE_SWITCH]);
 
@@ -125,6 +129,8 @@
     NO_ZOOM: 'NO_ZOOM', // Chrome refused to zoom this page (chrome:// pages, the web store, …)
     NO_AUDIO_SETUP: 'NO_AUDIO_SETUP', // output names unreadable: the one-time "Allow" on the Chromebook is missing
     AUDIO_FAILED: 'AUDIO_FAILED', // routing the TV's audio to the chosen output failed (data.reason says why)
+    NO_SETTINGS_ACCESS: 'NO_SETTINGS_ACCESS', // chrome://os-settings unreachable: flag extensions-on-chrome-urls off, or not ChromeOS
+    OUTPUT_FAILED: 'OUTPUT_FAILED', // a sound-output switch step failed (data.step / data.reason say which and why)
     PEER_UNAVAILABLE: 'PEER_UNAVAILABLE',
     TIMEOUT: 'TIMEOUT',
     INTERNAL: 'INTERNAL',
@@ -183,6 +189,11 @@
   const canonicalUrl = (url) => withHost(url, SITE_CANONICAL_HOST);
   const siteHome = (siteId) => `https://${(siteById(siteId) || siteById(DEFAULT_SITE)).host}/`;
   const DEFAULT_HOME_URL = siteHome(DEFAULT_SITE);
+
+  // outputSet ids (design 3.16.5): a paired Bluetooth device or a ChromeOS audio device; opaque, bounded.
+  const OUTPUT_ID_PREFIX = Object.freeze({ bt: 'bt:', audio: 'audio:' });
+  const isOutputId = (id) =>
+    typeof id === 'string' && id.length <= 256 && Object.values(OUTPUT_ID_PREFIX).some((p) => id.indexOf(p) === 0 && id.length > p.length);
 
   /** Kind of an audio output from its (OS-given) name, for the phone's icon: bluetooth / hdmi / builtin / other. */
   const audioKindOf = (label) => {
@@ -277,6 +288,7 @@
     [CMD.SITE_SWITCH]: (a) => (siteById(a.site) ? null : ERR.BAD_MESSAGE),
     // '' = the default output; otherwise a device id the extension listed (opaque, bounded).
     [CMD.AUDIO_OUTPUT_SET]: (a) => (typeof a.id === 'string' && a.id.length <= 256 ? null : ERR.BAD_MESSAGE),
+    [CMD.OUTPUT_SET]: (a) => (isOutputId(a.id) ? null : ERR.BAD_MESSAGE),
     // At least one of videoId / playlistId (a playlist alone starts at its first video).
     [CMD.YT_OPEN]: (a) =>
       (a.videoId !== undefined || a.playlistId !== undefined) &&
@@ -432,6 +444,8 @@
     canonicalUrl,
     siteHome,
     audioKindOf,
+    OUTPUT_ID_PREFIX,
+    isOutputId,
     ICE_SERVERS,
     newId,
     newKey,
