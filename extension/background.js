@@ -12,7 +12,7 @@
  * Message routing convention: every runtime message carries `target` ('bg' | 'offscreen')
  * or comes from a content script with `type` 'videoState'.
  */
-importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js', 'lib/library.js', 'lib/youtube.js');
+importScripts('lib/version.js', 'lib/protocol.js', 'lib/log.js', 'lib/library.js', 'lib/youtube.js', 'os-settings.js');
 
 const { CMD, ERR, TAB_NEED, ok, fail, executorOf, tabNeedOf, buildPairUrl, newKey } = CR;
 
@@ -1002,6 +1002,9 @@ const BG_HANDLERS = Object.freeze({
     log.info('audio.setup_done', { ok: Boolean(granted) });
     return Promise.resolve(true);
   },
+  // Iteration 30 (T222): read-only check that the ChromeOS settings page can be reached (os-settings.js).
+  sysSelfTest: () => osSettingsSelfTest(),
+  sysSelfTestLast: async () => (await chrome.storage.session.get('sysSelfTest')).sysSelfTest || null,
   regenerateKey: async () => {
     await updateConfig({ key: newKey() });
     log.info('config.key_regenerated');

@@ -186,6 +186,34 @@
     await bg('regenerateKey');
     render();
   });
+  // Self-test (iteration 30): can the extension reach chrome://os-settings? Full details go to the log.
+  const verdictText = (v) =>
+    !v.reachable
+      ? `${v.page}: 进不去设置页(请确认已打开 chrome://flags#extensions-on-chrome-urls 并重启)`
+      : `${v.page}: 通过 ${v.via} 进入 · 已配对 ${v.paired == null ? '?' : v.paired} · 输出 ${v.outputs == null ? '?' : v.outputs} · connect ${v.connect ? '有' : '无'} · setActive ${v.setActive ? '有' : '无'}`;
+  $('sysTest').addEventListener('click', async () => {
+    const btn = $('sysTest');
+    const pre = $('sysResult');
+    btn.disabled = true;
+    btn.textContent = '自检中…(约 10 秒,设置窗口会闪一下)';
+    pre.hidden = false;
+    pre.textContent = '';
+    try {
+      const res = await bg('sysSelfTest');
+      pre.textContent = res.error || `${res.verdicts.map(verdictText).join('\n')}\n\n完成。请点"导出日志"把文件发给开发者。`;
+    } catch (e) {
+      pre.textContent = `自检失败:${e.message || e}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '系统控制自检';
+    }
+  });
+  // Last self-test result (the popup may have closed while the settings window opened).
+  bg('sysSelfTestLast').then((last) => {
+    if (!last) return;
+    $('sysResult').hidden = false;
+    $('sysResult').textContent = `上次自检 ${new Date(last.ts).toLocaleTimeString()}:\n${last.verdicts.map(verdictText).join('\n')}`;
+  });
   $('showLogs').addEventListener('click', showLogs);
   $('exportLogs').addEventListener('click', exportLogs);
   $('clearLogs').addEventListener('click', async () => {
