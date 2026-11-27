@@ -365,7 +365,7 @@
   const autoVideo = (raw) => {
     if (!CRMusic.shouldAutoVideo(raw, av.handledSong)) return;
     av.handledSong = CRMusic.songKey(raw);
-    const res = clickMusic(document.querySelector(CRMusic.CONTROL_SELECTORS.avVideo), 'av_auto', {});
+    const { res } = clickMusic(findMusicControl('avVideo'), 'av_auto', {});
     log.info('music.av', { mode: 'video', source: 'auto', song: av.handledSong, ok: res.ok });
   };
 
@@ -379,14 +379,46 @@
     log[toggle ? 'info' : 'warn']('music.player_page', { action: toggle ? 'opened' : 'toggle_not_found' });
   };
 
-  const clickMusic = (el, what, fields) => {
-    if (!el) {
-      log.warn('music.not_found', { what, ...fields }); // selector no longer matches: YouTube Music changed
-      return fail(ERR.NO_MUSIC);
+  /** Player-bar buttons as "tag.class[label]" (≤ 40), logged on a miss so a new page variant can be mapped from one exported log. */
+  const musicBarButtons = () =>
+    [...document.querySelectorAll(`${CRMusic.SITE.bar} button, ${CRMusic.SITE.bar} yt-icon-button, ${CRMusic.SITE.bar} [role=button]`)]
+      .slice(0, 40)
+      .map((b) => `${b.tagName.toLowerCase()}${typeof b.className === 'string' && b.className.trim() ? '.' + b.className.trim().split(/\s+/).slice(0, 3).join('.') : ''}[${b.getAttribute('aria-label') || b.getAttribute('title') || ''}]`);
+
+  /** First candidate selector of an action that matches the page: {el, via}, or null. */
+  const findMusicControl = (action) => {
+    const candidates = CRMusic.CONTROL_SELECTORS[action] || [];
+    for (let i = 0; i < candidates.length; i++) {
+      const el = document.querySelector(candidates[i]);
+      if (el) return { el, via: CRMusic.viaOf(i) };
     }
-    el.click();
+    return null;
+  };
+
+  /** Press one of YouTube Music's own keyboard shortcuts (its hotkey handler listens on the document). */
+  const pressMusicHotkey = (hk) => {
+    const init = { key: hk.key, code: hk.code, keyCode: hk.keyCode, which: hk.keyCode, bubbles: true, cancelable: true, composed: true };
+    document.body.dispatchEvent(new KeyboardEvent('keydown', init));
+    document.body.dispatchEvent(new KeyboardEvent('keyup', init));
+  };
+
+  /**
+   * Activate a music control: click the first matching candidate, else press the action's shortcut.
+   * Returns {res, via}; via = 'selector' | 'selector#n' | 'hotkey' | null (nothing found).
+   */
+  const clickMusic = (target, what, fields) => {
+    const hotkey = !target && CRMusic.CONTROL_HOTKEYS[fields.action];
+    if (!target && !hotkey) {
+      // No candidate matches and no shortcut: YouTube Music changed; the inventory names the new structure.
+      log.warn('music.not_found', { what, ...fields, bar_buttons: musicBarButtons() });
+      return { res: fail(ERR.NO_MUSIC), via: null };
+    }
+    const via = target ? target.via : 'hotkey';
+    if (via !== 'selector') log.warn('music.selector_drift', { what, ...fields, via, bar_buttons: musicBarButtons() });
+    if (target) target.el.click();
+    else pressMusicHotkey(hotkey);
     setTimeout(pushSummaries, MUSIC_SETTLE_MS);
-    return ok();
+    return { res: ok(), via };
   };
   const AV_ACTIONS = Object.freeze({ avSong: 'song', avVideo: 'video' });
   const musicControl = ({ action }) => {
@@ -400,13 +432,14 @@
       av.handledSong = CRMusic.songKey(raw); // the phone's choice holds for this song
       if (state.mode === AV_ACTIONS[action]) return ok();
     }
-    const res = clickMusic(document.querySelector(CRMusic.CONTROL_SELECTORS[action]), action, { action });
-    log.info(AV_ACTIONS[action] ? 'music.av' : 'music.control', AV_ACTIONS[action] ? { mode: AV_ACTIONS[action], source: 'phone', ok: res.ok } : { action, ok: res.ok });
+    const { res, via } = clickMusic(findMusicControl(action), action, { action });
+    log.info(AV_ACTIONS[action] ? 'music.av' : 'music.control', AV_ACTIONS[action] ? { mode: AV_ACTIONS[action], source: 'phone', ok: res.ok, via } : { action, ok: res.ok, via });
     return res;
   };
   const musicQueuePlay = ({ index }) => {
     const item = document.querySelectorAll(CRMusic.SITE.queueItem)[index];
-    const res = clickMusic(item && item.querySelector(CRMusic.SITE.itemPlay), 'queue_play', { index });
+    const play = item && item.querySelector(CRMusic.SITE.itemPlay);
+    const { res } = clickMusic(play && { el: play, via: 'selector' }, 'queue_play', { index });
     log.info('music.queue_play', { index, ok: res.ok, title: item ? (item.querySelector(CRMusic.SITE.itemTitle) || {}).textContent : null });
     return res;
   };

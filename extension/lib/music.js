@@ -38,18 +38,40 @@
     playerPageToggle: 'ytmusic-player-bar .toggle-player-page-button',
   });
 
-  // Player-bar buttons per action (the expanded-menu duplicates live outside .right-controls-buttons).
+  /**
+   * Candidates for one button host, most specific first: the inner <button> (measured layout,
+   * `yt-icon-button.x > button#button`), the host being the <button> itself, then the host element.
+   * YouTube Music rolls page variants out per account, so one fixed selector breaks silently.
+   */
+  const hostCandidates = (scope, host) => [`${scope} ${host} button`, `${scope} button${host}`, `${scope} ${host}`];
+  const BAR = 'ytmusic-player-bar';
+
+  // Player-bar buttons per action: ordered candidate selectors, the first one is the measured one
+  // (2026-11-27 still valid on the signed-out page). The expanded-menu duplicates live outside
+  // .right-controls-buttons, so those come after the main-bar candidates.
   const CONTROL_SELECTORS = Object.freeze({
-    previous: 'ytmusic-player-bar .previous-button button',
-    next: 'ytmusic-player-bar .next-button button',
-    like: 'ytmusic-player-bar #like-button-renderer .like-button-wrapper button',
-    dislike: 'ytmusic-player-bar #like-button-renderer > yt-button-shape button',
-    repeat: 'ytmusic-player-bar .right-controls-buttons .repeat button',
-    shuffle: 'ytmusic-player-bar .right-controls-buttons .shuffle button',
-    avSong: 'ytmusic-av-toggle .song-button',
-    avVideo: 'ytmusic-av-toggle .video-button',
+    previous: Object.freeze(hostCandidates(BAR, '.previous-button')),
+    next: Object.freeze(hostCandidates(BAR, '.next-button')),
+    like: Object.freeze([`${BAR} #like-button-renderer .like-button-wrapper button`, `${BAR} #like-button-renderer .like button`]),
+    dislike: Object.freeze([`${BAR} #like-button-renderer > yt-button-shape button`, `${BAR} #like-button-renderer .dislike button`]),
+    repeat: Object.freeze([...hostCandidates(`${BAR} .right-controls-buttons`, '.repeat'), ...hostCandidates(BAR, '.repeat')]),
+    shuffle: Object.freeze([...hostCandidates(`${BAR} .right-controls-buttons`, '.shuffle'), ...hostCandidates(BAR, '.shuffle')]),
+    avSong: Object.freeze(['ytmusic-av-toggle .song-button']),
+    avVideo: Object.freeze(['ytmusic-av-toggle .video-button']),
   });
   const ACTIONS = Object.freeze(Object.keys(CONTROL_SELECTORS));
+
+  // YouTube Music's own keyboard shortcuts: a structure-free fallback when no candidate matches
+  // (verified 2026-11-27 with synthetic keydown on document.body).
+  const CONTROL_HOTKEYS = Object.freeze({
+    previous: Object.freeze({ key: 'k', code: 'KeyK', keyCode: 75 }),
+    next: Object.freeze({ key: 'j', code: 'KeyJ', keyCode: 74 }),
+    repeat: Object.freeze({ key: 'r', code: 'KeyR', keyCode: 82 }),
+    shuffle: Object.freeze({ key: 's', code: 'KeyS', keyCode: 83 }),
+  });
+
+  /** "via" label for the candidate that matched: 'selector' = the measured one, 'selector#n' = a fallback. */
+  const viaOf = (index) => (index === 0 ? 'selector' : `selector#${index}`);
 
   const REPEAT_MODES = Object.freeze(['NONE', 'ALL', 'ONE']);
   const LIKE_STATES = Object.freeze(['LIKE', 'DISLIKE', 'INDIFFERENT']);
@@ -135,5 +157,5 @@
     });
   };
 
-  root.CRMusic = Object.freeze({ SITE, CONTROL_SELECTORS, ACTIONS, isMusicHost, pickArt, queueWindow, musicState, normalizeRepeat, normalizeLike, avState, songKey, shouldAutoVideo });
+  root.CRMusic = Object.freeze({ SITE, CONTROL_SELECTORS, CONTROL_HOTKEYS, ACTIONS, viaOf, isMusicHost, pickArt, queueWindow, musicState, normalizeRepeat, normalizeLike, avState, songKey, shouldAutoVideo });
 })(typeof globalThis !== 'undefined' ? globalThis : this);
